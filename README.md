@@ -29,11 +29,14 @@ admin.html            admin dashboard (single page, tab-driven sections)
 manifest.webmanifest  PWA manifest, so the kiosk installs full-screen on iPad
 icon.svg              app icon referenced by the manifest
 css/styles.css        shared stylesheet
+package.json          marks the project as ESM and holds the test script only
 js/config.js          Supabase project URL + publishable key, tunables
-js/supabase.js        Supabase client + all data-access functions
+js/data.js            all data-access functions, as a factory over a client
+js/supabase.js        creates the live client and binds data.js to it
 js/ui.js              shared UI helpers (escaping, formatting, modals, banners)
 js/app.js             driver kiosk logic
 js/admin.js           admin dashboard logic
+tests/                node --test suite, no dependencies
 sql/schema.sql        full schema, RLS policies, and seed data
 ```
 
@@ -163,6 +166,44 @@ npx serve .
 
 Then open `http://localhost:<port>/index.html` for the driver kiosk, or
 `/admin.html` for the admin dashboard.
+
+## Running the tests
+
+```bash
+npm test        # or: node --test
+```
+
+No dependencies and no install step — this uses Node's built-in test runner
+(Node 18+). `package.json` exists only to mark the project as ESM and to hold
+that one script; nothing is bundled and nothing is downloaded.
+
+The suite covers `js/ui.js` and the write paths in `js/data.js`. Every case
+corresponds to a bug found in the August 2026 review, so they're regression
+tests rather than coverage for its own sake — the escaping tests in particular
+pin down a stored-XSS hole that shipped once already.
+
+`js/data.js` takes the Supabase client as a parameter rather than importing a
+singleton, which is what makes it testable: `js/supabase.js` imports the real
+client from a CDN URL that Node can't resolve, and asserting against a live
+database would be the wrong test anyway. `tests/fake-supabase.js` is a
+call-recording stand-in, so tests can assert on statement *ordering* and
+filters — which is where two of the bugs actually lived.
+
+## Overdue shifts
+
+A shift still open after `SHIFT_OVERDUE_HOURS` (12 by default, in
+`js/config.js`) is flagged as **Overdue** on the kiosk tile and in the admin
+dashboard's "On Shift Right Now" table.
+
+It is only ever a flag. Nothing closes a session automatically, because an
+automatic close would have to invent a return time, and a shift that really ran
+three hours would then be indistinguishable from one that ran fourteen. The
+driver can still return normally at any point.
+
+To clear one, an admin uses **Force Close** on the dashboard row. That records
+`end_time` as the moment the admin acted, leaves `checklist_completed` false,
+and writes an explanatory note to `return_notes` — so a cleanup stays
+distinguishable from a real return forever, in both the UI and raw SQL.
 
 ## Deploying to GitHub Pages
 

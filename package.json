@@ -1,0 +1,10 @@
+{
+  "name": "pitcrew",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Driver & vehicle operations kiosk for a Chick-fil-A delivery operation.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

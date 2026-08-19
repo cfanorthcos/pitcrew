@@ -362,6 +362,11 @@ button {
 .tile.is-attention {
   --status: var(--color-warn);
 }
+/* Overdue is a flag, not a lockout — the tile still returns normally, it just
+   stops reading as a healthy shift. */
+.tile.is-overdue {
+  --status: var(--color-warn);
+}
 .tile.is-out {
   --status: var(--color-out);
 }
@@ -1186,6 +1191,10 @@ tr.is-inactive td {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   color: var(--color-neutral);
+}
+
+.elapsed.is-overdue {
+  color: var(--color-warn);
 }
 
 /* -------------------------------------------------------------------------- */

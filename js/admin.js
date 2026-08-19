@@ -1,6 +1,7 @@
 import {
   fetchVehiclesWithAvailability,
   fetchOpenSessions,
+  forceCloseSession,
   fetchAllDrivers,
   createDriver,
   updateDriver,
@@ -25,7 +26,7 @@ import {
   fetchVehicleHistory,
   HISTORY_PAGE_SIZE,
 } from './supabase.js';
-import { HOT_BAG_CLEAN_WINDOW_DAYS, ADMIN_PIN } from './config.js';
+import { HOT_BAG_CLEAN_WINDOW_DAYS, ADMIN_PIN, SHIFT_OVERDUE_HOURS } from './config.js';
 import {
   escapeHtml,
   formatDate,
@@ -33,6 +34,8 @@ import {
   frequencyLabel,
   isNeedsCleaning,
   isTaskDue,
+  isShiftOverdue,
+  formatElapsed,
   showError,
   showSuccess,
   initOfflineBanner,
@@ -76,17 +79,33 @@ async function renderDashboard() {
     const openIssues = maintenance.filter((m) => m.status === 'open').length;
     const openIncidents = incidents.filter((i) => i.status === 'open').length;
 
+    const overdueSessions = openSessions.filter((s) => isShiftOverdue(s.start_time));
     const shiftRows = openSessions
-      .map(
-        (s) => `
+      .map((s) => {
+        const overdue = isShiftOverdue(s.start_time);
+        return `
           <tr>
             <td><strong>${escapeHtml(s.drivers?.name ?? '—')}</strong></td>
             <td>${escapeHtml(s.vehicles?.name ?? '—')}</td>
             <td>${formatDateTime(s.start_time)}</td>
-            <td><span class="elapsed" data-since="${escapeHtml(s.start_time)}">—</span></td>
+            <td><span class="elapsed ${
+              overdue ? 'is-overdue' : ''
+            }" data-since="${escapeHtml(s.start_time)}">—</span></td>
+            <td>${
+              overdue
+                ? '<span class="badge badge-warn">Overdue</span>'
+                : '<span class="badge badge-neutral">On shift</span>'
+            }</td>
+            <td>${
+              overdue
+                ? `<button type="button" class="btn btn-secondary btn-sm force-close-btn" data-session-id="${escapeHtml(
+                    s.id,
+                  )}">Force Close</button>`
+                : ''
+            }</td>
           </tr>
-        `,
-      )
+        `;
+      })
       .join('');
 
     container.innerHTML = `
@@ -99,11 +118,18 @@ async function renderDashboard() {
         ${statCard(openIncidents, 'Open Driver Incidents', 'incidents', openIncidents ? 'is-bad' : '')}
       </div>
 
-      <h2 class="section-title">On Shift Right Now</h2>
+      <div class="section-toolbar">
+        <h2 class="section-title">On Shift Right Now</h2>
+        ${
+          overdueSessions.length
+            ? `<p class="section-hint">${overdueSessions.length} past ${SHIFT_OVERDUE_HOURS}h without signing out.</p>`
+            : ''
+        }
+      </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Driver</th><th>Vehicle</th><th>Started</th><th>Elapsed</th></tr></thead>
-          <tbody>${shiftRows || '<tr><td colspan="4">Nobody is out right now.</td></tr>'}</tbody>
+          <thead><tr><th>Driver</th><th>Vehicle</th><th>Started</th><th>Elapsed</th><th>State</th><th></th></tr></thead>
+          <tbody>${shiftRows || '<tr><td colspan="6">Nobody is out right now.</td></tr>'}</tbody>
         </table>
       </div>
     `;
@@ -111,11 +137,67 @@ async function renderDashboard() {
     container.querySelectorAll('[data-goto]').forEach((el) => {
       el.addEventListener('click', () => switchSection(el.dataset.goto));
     });
+
+    container.querySelectorAll('.force-close-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openForceCloseModal(openSessions.find((s) => s.id === btn.dataset.sessionId));
+      });
+    });
     refreshTickers();
   } catch {
     showError('Could not load dashboard data. Check your connection.');
     container.innerHTML = '<p class="empty-state">Could not load dashboard data.</p>';
   }
+}
+
+// Confirmation rather than a one-tap action: this writes an end_time that isn't
+// a real return, so the admin should see exactly what they're recording.
+function openForceCloseModal(session) {
+  const driverName = session.drivers?.name ?? 'Unknown driver';
+  const vehicleName = session.vehicles?.name ?? 'this vehicle';
+  const defaultNote = `Closed by admin — driver did not sign out (was out ${formatElapsed(
+    session.start_time,
+  )}).`;
+
+  const sheet = openModal(
+    `Force close ${driverName}'s shift`,
+    `
+      <h2>Force Close Shift</h2>
+      <p class="meta">${escapeHtml(driverName)} · ${escapeHtml(vehicleName)}</p>
+      <div class="card-row">
+        <div class="confirm-detail">Started<strong>${formatDateTime(session.start_time)}</strong></div>
+        <div class="confirm-detail">Out for<strong>${escapeHtml(formatElapsed(session.start_time))}</strong></div>
+      </div>
+      <p class="meta">
+        This frees ${escapeHtml(vehicleName)} on the board. It records the shift as
+        closed by you, right now, with the checklist marked incomplete — not as a
+        normal return.
+      </p>
+      <div>
+        <label class="field-label" for="force-close-note">Note saved to history</label>
+        <textarea id="force-close-note">${escapeHtml(defaultNote)}</textarea>
+      </div>
+      <button type="button" class="btn btn-primary" id="force-close-confirm">Force Close Shift</button>
+      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+    `,
+  );
+
+  const confirmBtn = sheet.querySelector('#force-close-confirm');
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Closing…';
+    try {
+      const note = sheet.querySelector('#force-close-note').value.trim();
+      await forceCloseSession(session.id, note || defaultNote);
+      closeModal();
+      showSuccess(`${vehicleName} is available again.`);
+      await renderDashboard();
+    } catch (err) {
+      showError(err.message || 'Could not close this shift. Try again.');
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Force Close Shift';
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

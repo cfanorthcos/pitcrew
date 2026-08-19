@@ -20,6 +20,7 @@ import {
   frequencyLabel,
   isNeedsCleaning,
   isTaskDue,
+  isShiftOverdue,
   showError,
   showSuccess,
   initOfflineBanner,
@@ -104,7 +105,13 @@ async function refreshTabCounts() {
 // vehicle board (command center)
 // ---------------------------------------------------------------------------
 function tileStatus(vehicle) {
-  if (vehicle.activeSession) return { key: 'in-use', label: 'In Use', action: 'Tap to return' };
+  if (vehicle.activeSession) {
+    // Flagged, not acted on: the tile still returns normally, it just stops
+    // looking like a healthy shift so someone asks about it.
+    return isShiftOverdue(vehicle.activeSession.start_time)
+      ? { key: 'overdue', label: 'Overdue', action: 'Tap to return' }
+      : { key: 'in-use', label: 'In Use', action: 'Tap to return' };
+  }
   if (vehicle.status === 'out_of_service') {
     return { key: 'out', label: 'Out of Service', action: 'Unavailable' };
   }
@@ -134,7 +141,9 @@ function buildVehicleTile(vehicle) {
       ${
         session
           ? `<span class="tile-driver">${escapeHtml(session.drivers?.name ?? 'Unknown driver')}</span>
-             <span class="tile-timer"><b data-since="${escapeHtml(session.start_time)}">—</b> on shift</span>`
+             <span class="tile-timer"><b data-since="${escapeHtml(session.start_time)}">—</b> ${
+               status.key === 'overdue' ? 'without signing out' : 'on shift'
+             }</span>`
           : `<span class="tile-driver tile-driver-idle">${escapeHtml(vehicle.color_name)}</span>`
       }
     </span>

@@ -2,7 +2,7 @@
 // dashboard (admin.js). These were previously duplicated verbatim in both
 // files, which is how the escaping bug below survived in two places at once.
 
-import { HOT_BAG_CLEAN_WINDOW_DAYS } from './config.js';
+import { HOT_BAG_CLEAN_WINDOW_DAYS, SHIFT_OVERDUE_HOURS } from './config.js';
 
 // ---------------------------------------------------------------------------
 // escaping
@@ -87,6 +87,13 @@ export function isNeedsCleaning(bag) {
 
 export function isTaskDue(task) {
   return new Date(task.next_due) <= new Date();
+}
+
+// A shift open past SHIFT_OVERDUE_HOURS almost certainly means the driver went
+// home without signing out. Both boards flag it; neither acts on it.
+export function isShiftOverdue(startTime, now = Date.now()) {
+  if (!startTime) return false;
+  return now - new Date(startTime).getTime() > SHIFT_OVERDUE_HOURS * 60 * 60 * 1000;
 }
 
 // ---------------------------------------------------------------------------

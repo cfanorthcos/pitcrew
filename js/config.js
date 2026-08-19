@@ -10,6 +10,13 @@ export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_FxAis5fQyiSWWcP-fgLMDw_4
 // individually from the admin Hot Bags screen; this is just the prefill.
 export const HOT_BAG_CLEAN_WINDOW_DAYS = 7;
 
+// A shift still open after this many hours is treated as "the driver forgot to
+// sign out" and flagged on both boards. It is only ever a flag: nothing closes
+// a session automatically, so PitCrew never invents a return time. An admin
+// force-closes from the dashboard, and that gets recorded as a management
+// action so history stays honest about which returns were real.
+export const SHIFT_OVERDUE_HOURS = 12;
+
 // Admin screen passcode. This is a casual deterrent only, NOT real
 // security — it's a plain constant shipped in frontend code, same as the
 // publishable key above. The actual access boundary is Supabase RLS
