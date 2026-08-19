@@ -22,6 +22,11 @@ import {
   updateSlowTask,
   setSlowTaskActive,
   fetchSlowTaskCompletions,
+  fetchAllChecklistItems,
+  createChecklistItem,
+  updateChecklistItem,
+  setChecklistItemActive,
+  reorderChecklistItems,
   fetchDriverHistory,
   fetchVehicleHistory,
   HISTORY_PAGE_SIZE,
@@ -482,6 +487,172 @@ async function renderDriverHistory() {
   } catch {
     showError('Could not load driver history.');
     container.innerHTML = '<p class="empty-state">Could not load driver history.</p>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// return checklist (the questions drivers answer when signing out)
+// ---------------------------------------------------------------------------
+function openChecklistItemModal(item = null, nextSortOrder = 1) {
+  const isEdit = Boolean(item);
+  const sheet = openModal(
+    isEdit ? `Edit ${item.label}` : 'Add a checklist item',
+    `
+      <h2>${isEdit ? 'Edit Checklist Item' : 'Add Checklist Item'}</h2>
+      <p class="meta">Drivers must tick every active item before they can sign out.</p>
+      <div>
+        <label class="field-label" for="checklist-label-input">Label</label>
+        <input type="text" id="checklist-label-input" placeholder="e.g. Remove trash from vehicle" value="${escapeHtml(
+          item?.label ?? '',
+        )}" />
+      </div>
+      <button type="button" class="btn btn-primary" id="checklist-save-btn">${
+        isEdit ? 'Save Changes' : 'Add Item'
+      }</button>
+      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+    `,
+  );
+
+  const saveBtn = sheet.querySelector('#checklist-save-btn');
+  saveBtn.addEventListener('click', async () => {
+    const label = sheet.querySelector('#checklist-label-input').value.trim();
+    if (!label) {
+      showError('Label is required.');
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      if (isEdit) await updateChecklistItem(item.id, { label });
+      else await createChecklistItem(label, nextSortOrder);
+      closeModal();
+      showSuccess(isEdit ? 'Checklist item updated.' : 'Checklist item added.');
+      await renderChecklistItems();
+    } catch (err) {
+      showError(err.message || 'Could not save this item. Try again.');
+      saveBtn.disabled = false;
+      saveBtn.textContent = isEdit ? 'Save Changes' : 'Add Item';
+    }
+  });
+}
+
+async function renderChecklistItems() {
+  const container = document.getElementById('section-checklist');
+  container.innerHTML = '<p class="empty-state">Loading…</p>';
+  try {
+    const items = await fetchAllChecklistItems();
+    const active = items.filter((i) => i.active);
+
+    const rows = items
+      .map((item) => {
+        const activeIndex = active.findIndex((a) => a.id === item.id);
+        const atTop = activeIndex === 0;
+        const atBottom = activeIndex === active.length - 1;
+        return `
+          <tr class="${item.active ? '' : 'is-inactive'}">
+            <td>${item.active ? activeIndex + 1 : '—'}</td>
+            <td class="cell-wrap"><strong>${escapeHtml(item.label)}</strong></td>
+            <td><span class="badge ${item.active ? 'badge-good' : 'badge-muted'}">${
+              item.active ? 'Active' : 'Retired'
+            }</span></td>
+            <td>
+              <div class="row-actions">
+                ${
+                  item.active
+                    ? `<button type="button" class="btn btn-secondary btn-sm move-item-btn" data-item-id="${escapeHtml(
+                        item.id,
+                      )}" data-dir="-1" ${atTop ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
+                       <button type="button" class="btn btn-secondary btn-sm move-item-btn" data-item-id="${escapeHtml(
+                         item.id,
+                       )}" data-dir="1" ${atBottom ? 'disabled' : ''} aria-label="Move down">&darr;</button>`
+                    : ''
+                }
+                <button type="button" class="btn btn-secondary btn-sm edit-item-btn" data-item-id="${escapeHtml(
+                  item.id,
+                )}">Edit</button>
+                <button type="button" class="btn btn-secondary btn-sm toggle-item-btn" data-item-id="${escapeHtml(
+                  item.id,
+                )}">${item.active ? 'Retire' : 'Restore'}</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = `
+      <div class="section-toolbar">
+        <h2 class="section-title">Return Checklist</h2>
+        <button type="button" class="btn btn-primary btn-auto" id="add-checklist-btn">+ Add Item</button>
+      </div>
+      <p class="section-hint">
+        Drivers tick every active item, in this order, before they can sign out.
+        Retiring an item hides it from new returns but keeps old returns readable.
+      </p>
+      ${
+        active.length === 0
+          ? '<p class="section-warning">No active items — drivers will sign out without a checklist.</p>'
+          : ''
+      }
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>#</th><th>Item</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="4">No checklist items yet.</td></tr>'}</tbody>
+        </table>
+      </div>
+    `;
+
+    const nextSortOrder = items.length + 1;
+    container
+      .querySelector('#add-checklist-btn')
+      .addEventListener('click', () => openChecklistItemModal(null, nextSortOrder));
+
+    container.querySelectorAll('.edit-item-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openChecklistItemModal(items.find((i) => i.id === btn.dataset.itemId));
+      });
+    });
+
+    container.querySelectorAll('.toggle-item-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = items.find((i) => i.id === btn.dataset.itemId);
+        btn.disabled = true;
+        try {
+          await setChecklistItemActive(item.id, !item.active);
+          await renderChecklistItems();
+        } catch (err) {
+          showError(err.message || 'Could not update this item. Try again.');
+          btn.disabled = false;
+        }
+      });
+    });
+
+    container.querySelectorAll('.move-item-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const from = active.findIndex((a) => a.id === btn.dataset.itemId);
+        const to = from + Number(btn.dataset.dir);
+        if (from < 0 || to < 0 || to >= active.length) return;
+
+        const reordered = [...active];
+        const [moved] = reordered.splice(from, 1);
+        reordered.splice(to, 0, moved);
+
+        container.querySelectorAll('.move-item-btn').forEach((b) => {
+          b.disabled = true;
+        });
+        try {
+          await reorderChecklistItems(reordered.map((i) => i.id));
+        } catch (err) {
+          showError(err.message || 'Could not reorder the checklist. Try again.');
+        }
+        // Re-render either way: a partial reorder must not leave the screen
+        // showing an order the database doesn't actually have.
+        await renderChecklistItems();
+      });
+    });
+  } catch {
+    showError('Could not load the return checklist.');
+    container.innerHTML = '<p class="empty-state">Could not load the return checklist.</p>';
   }
 }
 
@@ -993,6 +1164,7 @@ const RENDERERS = {
   vehicles: renderVehicles,
   drivers: renderDrivers,
   'driver-history': renderDriverHistory,
+  checklist: renderChecklistItems,
   incidents: renderDriverIncidents,
   hotbags: renderHotBagsAdmin,
   slowtasks: renderSlowTasksAdmin,

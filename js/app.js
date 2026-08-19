@@ -305,6 +305,17 @@ async function loadReturnChecklist() {
   try {
     const items = await fetchChecklistItems();
     state.checklistItems = items;
+
+    // Admin can retire every item. Without this branch the loop below renders
+    // nothing, no change event ever fires, and the submit button stays disabled
+    // forever — the driver could never sign out and the vehicle would be stuck
+    // checked out. No checklist means nothing to confirm, so allow the return.
+    if (items.length === 0) {
+      container.innerHTML = '<p class="empty-state">No checklist items — you can sign out directly.</p>';
+      submitBtn.disabled = false;
+      return;
+    }
+
     container.replaceChildren(
       ...items.map((item) => {
         const row = document.createElement('label');

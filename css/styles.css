@@ -1050,6 +1050,17 @@ label.field-label {
   color: var(--color-text-faint);
 }
 
+/* A consequence the admin should notice before they hit save, not after. */
+.section-warning {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warn) 12%, white);
+  color: var(--color-warn);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
 .back-link {
   align-self: flex-start;
   background: none;

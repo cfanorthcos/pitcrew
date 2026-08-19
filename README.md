@@ -155,6 +155,23 @@ If step 3 errors, some row already holds a status outside `open`/`resolved` —
 find it with `select distinct status from public.driver_incidents;` and correct
 it before retrying.
 
+### Third upgrade: editable return checklist
+
+Lets admin edit the return checklist from the app instead of SQL. Safe to
+re-run.
+
+```sql
+drop policy if exists checklist_items_insert on public.checklist_items;
+create policy checklist_items_insert on public.checklist_items for insert with check (true);
+
+drop policy if exists checklist_items_update on public.checklist_items;
+create policy checklist_items_update on public.checklist_items for update using (true) with check (true);
+```
+
+Until this runs, the Return Checklist screen still lists the items (reads were
+always allowed) but every Add / Edit / Retire / reorder fails with "That change
+didn't save — check that the database schema is up to date."
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -245,6 +262,29 @@ This is admin-only — the kiosk has no incident screen — but see "Security
 considerations" below for why that's a UI-level distinction only, not an
 enforced one.
 
+## How to change the return checklist
+
+Admin → **Return Checklist** controls the questions a driver must tick before
+they can sign out. "+ Add Item", **Edit** to reword one, **↑ / ↓** to reorder,
+and **Retire / Restore** to take one out of rotation.
+
+Retiring never deletes: `driving_session_checklist_items` rows point at
+`checklist_items.id`, so past returns must keep resolving to a real label.
+Reordering renumbers `sort_order` as 1..n across the active items rather than
+swapping a pair, so the order can't drift when two rows share a number.
+
+If every item is retired, the kiosk says so and lets the driver sign out
+directly — otherwise the return screen would have nothing to confirm and the
+vehicle could never be handed back.
+
+Equivalent SQL:
+
+```sql
+insert into checklist_items (label, sort_order) values ('Check tire pressure', 6);
+update checklist_items set label = 'Remove all trash' where sort_order = 1;
+update checklist_items set active = false where label = 'Old item'; -- retire
+```
+
 ## How to change vehicles
 
 ```sql
@@ -304,10 +344,10 @@ exactly the operations each screen needs (see the comments in
 - No table allows `delete` from the client — history is permanent.
   "Deactivating" a driver/hot bag/slow task is always an `update` setting
   `active = false`, never a row delete.
-- Vehicles and checklist items are still **read-only** from the client;
-  they're only ever changed via direct SQL. Everything else the app writes
-  to — drivers, hot bags, slow tasks, sessions, maintenance reports,
-  completions, **driver incidents** — is reachable by anyone with the
+- Vehicles are still **read-only** from the client; they're only ever
+  changed via direct SQL. Everything else the app writes
+  to — drivers, hot bags, slow tasks, **return-checklist items**, sessions,
+  maintenance reports, completions, **driver incidents** — is reachable by anyone with the
   publishable key, whether or not they ever open `admin.html`. Driver
   incidents are the most sensitive data in this schema (customer names,
   complaint details tied to a specific employee) and get exactly the same

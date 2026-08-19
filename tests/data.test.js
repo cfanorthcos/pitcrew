@@ -229,6 +229,71 @@ test('forceCloseSession throws when the shift is already closed', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// return-checklist items
+// ---------------------------------------------------------------------------
+test('fetchChecklistItems returns only active items, in order', async () => {
+  const { api, calls } = setup(byTable({ checklist_items: { data: [] } }));
+
+  await api.fetchChecklistItems();
+
+  assert.deepEqual(findFilter(calls[0], 'active'), { type: 'eq', column: 'active', value: true });
+  assert.equal(calls[0].modifiers.find((m) => m.type === 'order').column, 'sort_order');
+});
+
+test('fetchAllChecklistItems includes retired items for the admin screen', async () => {
+  const { api, calls } = setup(byTable({ checklist_items: { data: [] } }));
+
+  await api.fetchAllChecklistItems();
+
+  assert.equal(findFilter(calls[0], 'active'), undefined);
+});
+
+test('setChecklistItemActive retires rather than deletes', async () => {
+  // History rows reference item_id, so a delete would orphan them.
+  const { api, calls } = setup(byTable({ checklist_items: { data: { id: 'item-1' } } }));
+
+  await api.setChecklistItemActive('item-1', false);
+
+  assert.equal(calls[0].op, 'update');
+  assert.equal(calls[0].payload.active, false);
+});
+
+test('setChecklistItemActive surfaces a missing write policy instead of silently passing', async () => {
+  const { api } = setup(byTable({ checklist_items: { error: pgError('PGRST116') } }));
+
+  await assert.rejects(() => api.setChecklistItemActive('item-1', false), /schema is up to date/i);
+});
+
+test('reorderChecklistItems renumbers sequentially from 1', async () => {
+  // Renumbering rather than swapping: a swap silently no-ops when two rows
+  // share a sort_order, and the order then drifts from what admin sees.
+  const { api, calls } = setup(byTable({ checklist_items: { data: { id: 'x' } } }));
+
+  await api.reorderChecklistItems(['c', 'a', 'b']);
+
+  assert.equal(calls.length, 3);
+  assert.deepEqual(
+    calls.map((c) => [findFilter(c, 'id').value, c.payload.sort_order]),
+    [
+      ['c', 1],
+      ['a', 2],
+      ['b', 3],
+    ],
+  );
+});
+
+test('reorderChecklistItems stops at the first failed write', async () => {
+  let seen = 0;
+  const { api, calls } = setup(() => {
+    seen += 1;
+    return seen === 2 ? { error: pgError('PGRST116') } : { data: { id: 'x' } };
+  });
+
+  await assert.rejects(() => api.reorderChecklistItems(['a', 'b', 'c']));
+  assert.equal(calls.length, 2, 'must not keep writing after a failure');
+});
+
+// ---------------------------------------------------------------------------
 // bounded history
 // ---------------------------------------------------------------------------
 test('fetchDriverHistory is bounded and newest-first', async () => {

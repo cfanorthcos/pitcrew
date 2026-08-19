@@ -214,6 +214,51 @@ export function createDataApi(supabase) {
     return data;
   }
 
+  // ---------------------------------------------------------------------------
+  // admin: return-checklist items CRUD
+  //
+  // These used to be SQL-only reference data. They're the questions every driver
+  // answers at the end of every shift, so leadership needs to change them without
+  // a developer. Never deleted — deactivating keeps historical
+  // driving_session_checklist_items rows pointing at a real label.
+  // ---------------------------------------------------------------------------
+  async function fetchAllChecklistItems() {
+    const { data, error } = await supabase
+      .from('checklist_items')
+      .select('*')
+      .order('active', { ascending: false })
+      .order('sort_order');
+    if (error) throw error;
+    return data;
+  }
+
+  async function createChecklistItem(label, sortOrder) {
+    const { data, error } = await supabase
+      .from('checklist_items')
+      .insert({ label, sort_order: sortOrder })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function updateChecklistItem(id, { label }) {
+    await updateRowOrThrow('checklist_items', id, { label });
+  }
+
+  async function setChecklistItemActive(id, active) {
+    await updateRowOrThrow('checklist_items', id, { active });
+  }
+
+  // Takes the full desired order and rewrites sort_order as 1..n. Swapping a
+  // pair would be fewer writes, but it silently does nothing when two rows share
+  // a sort_order — renumbering can't drift.
+  async function reorderChecklistItems(orderedIds) {
+    for (const [index, id] of orderedIds.entries()) {
+      await updateRowOrThrow('checklist_items', id, { sort_order: index + 1 });
+    }
+  }
+
   async function returnVehicle(sessionId, itemIds, notes) {
     // These used to run in parallel, which meant a lost race (someone else closed
     // this session first) left checklist rows attached to a session this driver
@@ -419,6 +464,11 @@ export function createDataApi(supabase) {
     forceCloseSession,
     fetchOpenSessions,
     fetchChecklistItems,
+    fetchAllChecklistItems,
+    createChecklistItem,
+    updateChecklistItem,
+    setChecklistItemActive,
+    reorderChecklistItems,
     returnVehicle,
     fetchHotBags,
     markHotBagCleaned,

@@ -199,9 +199,9 @@ alter table public.driver_incidents enable row level security;
 alter table public.slow_tasks enable row level security;
 alter table public.slow_task_completions enable row level security;
 
--- Vehicles/checklist items are read-only reference data, managed by an
--- operator directly in the Supabase SQL editor (see README) — there is no
--- create/edit UI for them, so no client write policy is needed.
+-- Vehicles are read-only reference data, managed by an operator directly in the
+-- Supabase SQL editor (see README) — there is no create/edit UI for them, so no
+-- client write policy is needed.
 --
 -- Drivers, hot bags, and slow tasks get full admin CRUD (select/insert/
 -- update, never delete — deactivating sets active = false so history stays
@@ -212,6 +212,11 @@ create policy drivers_insert on public.drivers for insert with check (true);
 create policy drivers_update on public.drivers for update using (true) with check (true);
 create policy vehicles_select on public.vehicles for select using (true);
 create policy checklist_items_select on public.checklist_items for select using (true);
+-- The return checklist is edited from admin (label, order, active). No delete:
+-- historical driving_session_checklist_items rows must keep resolving to a real
+-- label, so retiring an item sets active = false.
+create policy checklist_items_insert on public.checklist_items for insert with check (true);
+create policy checklist_items_update on public.checklist_items for update using (true) with check (true);
 
 -- driving_sessions: kiosk can open a session (insert) and close its own open
 -- session (update); everyone can read for dashboards/history.
