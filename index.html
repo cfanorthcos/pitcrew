@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#16130f" />
+  <meta name="color-scheme" content="light" />
+  <!-- Added to the iPad home screen this runs full-screen, without Safari chrome. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PitCrew" />
+  <title>PitCrew</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏁</text></svg>" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="banner-region"></div>
+
+  <!-- STATUS RAIL: fleet state at a glance from across the room ----------- -->
+  <header class="rail">
+    <div class="rail-brand"><span class="rail-mark" aria-hidden="true">🏁</span> PitCrew</div>
+    <div class="rail-stats">
+      <span class="rail-stat"><b id="rail-out">—</b> out</span>
+      <span class="rail-sep" aria-hidden="true"></span>
+      <span class="rail-stat"><b id="rail-free">—</b> free</span>
+      <span class="rail-sep" aria-hidden="true"></span>
+      <span class="rail-clock" data-clock>—</span>
+    </div>
+  </header>
+
+  <div class="app" id="app">
+    <nav class="tab-bar" id="tab-bar" role="tablist" aria-label="Sections">
+      <button type="button" role="tab" data-tab="vehicles" class="active" aria-selected="true">
+        Vehicles<span class="tab-count hidden">0</span>
+      </button>
+      <button type="button" role="tab" data-tab="hotbags" aria-selected="false">
+        Hot Bags<span class="tab-count hidden">0</span>
+      </button>
+      <button type="button" role="tab" data-tab="slowtasks" aria-selected="false">
+        Slow Tasks<span class="tab-count hidden">0</span>
+      </button>
+    </nav>
+
+    <!-- VEHICLES: command-center board -------------------------------- -->
+    <section class="tab-panel active" id="panel-vehicles">
+      <div class="vehicle-board" id="vehicle-board"></div>
+    </section>
+
+    <!-- VEHICLES: return checklist (opened by tapping an in-use tile) -- -->
+    <section class="tab-panel" id="panel-checklist">
+      <div class="top-bar">
+        <button class="back-btn" id="checklist-back-btn" aria-label="Back to vehicles">‹</button>
+        <h2>Return Vehicle</h2>
+      </div>
+      <div class="view-body">
+        <div class="card" id="checklist-summary"></div>
+        <div class="checklist" id="return-checklist"></div>
+        <div>
+          <label class="field-label" for="return-notes">Anything we should know?</label>
+          <textarea id="return-notes" placeholder="Optional"></textarea>
+        </div>
+        <button class="btn btn-primary" id="submit-return-btn" disabled>Complete &amp; Sign Out</button>
+      </div>
+    </section>
+
+    <!-- HOT BAG CHECK ---------------------------------------------------- -->
+    <section class="tab-panel" id="panel-hotbags">
+      <div class="view-body">
+        <div class="item-list" id="hotbag-list"></div>
+      </div>
+    </section>
+
+    <!-- SLOW TASKS --------------------------------------------------------- -->
+    <section class="tab-panel" id="panel-slowtasks">
+      <div class="view-body">
+        <div class="item-list" id="slowtask-list"></div>
+      </div>
+    </section>
+
+    <div class="admin-link"><a href="admin.html">Admin</a></div>
+  </div>
+
+  <div id="modal-region"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#16130f" />
+  <meta name="color-scheme" content="light" />
+  <title>PitCrew Admin</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏁</text></svg>" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="banner-region"></div>
+
+  <!-- LOCK SCREEN: casual PIN deterrent, not real auth — see config.js ---- -->
+  <div class="lock-overlay" id="lock-overlay">
+    <div class="lock-card">
+      <span class="lock-mark" aria-hidden="true">🏁</span>
+      <h1>PitCrew Admin</h1>
+      <p>Enter the admin PIN to continue.</p>
+      <input type="password" inputmode="numeric" id="lock-pin-input" placeholder="PIN" autocomplete="off" />
+      <button type="button" class="btn btn-primary" id="lock-submit-btn">Unlock</button>
+      <p class="lock-error hidden" id="lock-error">Incorrect PIN. Try again.</p>
+    </div>
+  </div>
+
+  <div class="admin-app hidden" id="admin-app">
+    <header class="rail">
+      <div class="rail-brand">
+        <span class="rail-mark" aria-hidden="true">🏁</span> PitCrew
+        <span class="rail-tag">Admin</span>
+      </div>
+      <div class="rail-stats">
+        <span class="rail-clock" data-clock>—</span>
+        <a href="index.html" class="rail-link">‹ Back to kiosk</a>
+      </div>
+    </header>
+
+    <nav class="admin-nav" id="admin-nav" aria-label="Admin sections">
+      <button type="button" data-section="dashboard" class="active">Dashboard</button>
+      <button type="button" data-section="vehicles">Vehicles</button>
+      <button type="button" data-section="drivers">Drivers</button>
+      <button type="button" data-section="driver-history">Driver History</button>
+      <button type="button" data-section="incidents">Driver Incidents</button>
+      <button type="button" data-section="hotbags">Hot Bags</button>
+      <button type="button" data-section="slowtasks">Slow Tasks</button>
+    </nav>
+
+    <main class="admin-main">
+      <section class="admin-section" id="section-dashboard"></section>
+      <section class="admin-section hidden" id="section-vehicles"></section>
+      <section class="admin-section hidden" id="section-vehicle-detail"></section>
+      <section class="admin-section hidden" id="section-drivers"></section>
+      <section class="admin-section hidden" id="section-driver-history"></section>
+      <section class="admin-section hidden" id="section-incidents"></section>
+      <section class="admin-section hidden" id="section-hotbags"></section>
+      <section class="admin-section hidden" id="section-slowtasks"></section>
+      <section class="admin-section hidden" id="section-slowtask-detail"></section>
+    </main>
+  </div>
+
+  <div id="modal-region"></div>
+
+  <script type="module" src="js/admin.js"></script>
+</body>
+</html>

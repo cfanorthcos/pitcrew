@@ -1,0 +1,19 @@
+{
+  "name": "PitCrew — Driver & Vehicle Operations",
+  "short_name": "PitCrew",
+  "description": "Kiosk board for delivery vehicle checkout, hot bag cleaning, and recurring tasks.",
+  "start_url": "index.html",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f2ee",
+  "theme_color": "#16130f",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
