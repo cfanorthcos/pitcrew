@@ -111,6 +111,11 @@ create policy driver_incidents_update on public.driver_incidents for update usin
 
 ### Second upgrade: constraints, indexes, and duplicate-name protection
 
+**Requires the previous section first** — this block touches
+`driver_incidents`, which the first upgrade creates. Running it against a
+project that hasn't had the first upgrade applied fails with
+`relation "public.driver_incidents" does not exist`.
+
 Run this once on an existing project to pick up the hardening added during the
 code review. **Run the first query on its own** — the unique index will fail if
 your `drivers` table already contains case-insensitive duplicates, and you need
