@@ -236,8 +236,13 @@ create policy hot_bags_select on public.hot_bags for select using (true);
 create policy hot_bags_insert on public.hot_bags for insert with check (true);
 create policy hot_bags_update on public.hot_bags for update using (true) with check (true);
 
+-- hot_bag_maintenance: the kiosk files issues, admin resolves them. Update is
+-- needed for the Resolve/Reopen action -- without it the status column and the
+-- dashboard's open-issue count are write-once and every issue stays open
+-- forever. Never delete: the maintenance log is history.
 create policy hot_bag_maintenance_select on public.hot_bag_maintenance for select using (true);
 create policy hot_bag_maintenance_insert on public.hot_bag_maintenance for insert with check (true);
+create policy hot_bag_maintenance_update on public.hot_bag_maintenance for update using (true) with check (true);
 
 -- driver_incidents: admin-only in practice (no kiosk screen touches this
 -- table), but there's no per-role identity to enforce that at the RLS

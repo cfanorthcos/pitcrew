@@ -38,6 +38,7 @@ export const {
   fetchHotBags,
   markHotBagCleaned,
   reportHotBagIssue,
+  setHotBagIssueStatus,
   fetchHotBagMaintenanceHistory,
   fetchAllHotBags,
   createHotBag,

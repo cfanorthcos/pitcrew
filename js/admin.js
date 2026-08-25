@@ -16,6 +16,7 @@ import {
   updateHotBag,
   setHotBagActive,
   fetchHotBagMaintenanceHistory,
+  setHotBagIssueStatus,
   fetchSlowTasks,
   fetchAllSlowTasks,
   createSlowTask,
@@ -925,6 +926,13 @@ async function renderHotBagsAdmin() {
               m.status,
             )}</span></td>
             <td>${formatDateTime(m.submitted_at)}</td>
+            <td>
+              <div class="row-actions">
+                <button type="button" class="btn btn-secondary btn-sm toggle-maintenance-btn" data-maintenance-id="${escapeHtml(
+                  m.id,
+                )}">${m.status === 'open' ? 'Resolve' : 'Reopen'}</button>
+              </div>
+            </td>
           </tr>
         `,
       )
@@ -944,8 +952,8 @@ async function renderHotBagsAdmin() {
       <h2 class="section-title">Maintenance History</h2>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Bag</th><th>Issue</th><th>Notes</th><th>Status</th><th>Submitted</th></tr></thead>
-          <tbody>${maintenanceRows || '<tr><td colspan="5">No maintenance reports yet.</td></tr>'}</tbody>
+          <thead><tr><th>Bag</th><th>Issue</th><th>Notes</th><th>Status</th><th>Submitted</th><th>Actions</th></tr></thead>
+          <tbody>${maintenanceRows || '<tr><td colspan="6">No maintenance reports yet.</td></tr>'}</tbody>
         </table>
       </div>
     `;
@@ -965,6 +973,20 @@ async function renderHotBagsAdmin() {
           await renderHotBagsAdmin();
         } catch (err) {
           showError(err.message || 'Could not update this hot bag. Try again.');
+          btn.disabled = false;
+        }
+      });
+    });
+
+    container.querySelectorAll('.toggle-maintenance-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const report = maintenance.find((m) => m.id === btn.dataset.maintenanceId);
+        btn.disabled = true;
+        try {
+          await setHotBagIssueStatus(report.id, report.status === 'open');
+          await renderHotBagsAdmin();
+        } catch (err) {
+          showError(err.message || 'Could not update this maintenance report. Try again.');
           btn.disabled = false;
         }
       });

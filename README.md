@@ -172,6 +172,22 @@ Until this runs, the Return Checklist screen still lists the items (reads were
 always allowed) but every Add / Edit / Retire / reorder fails with "That change
 didn't save — check that the database schema is up to date."
 
+### Fourth upgrade: resolving hot bag issues
+
+Lets admin resolve a reported hot bag issue instead of it staying open
+forever. Safe to re-run.
+
+```sql
+drop policy if exists hot_bag_maintenance_update on public.hot_bag_maintenance;
+create policy hot_bag_maintenance_update on public.hot_bag_maintenance
+  for update using (true) with check (true);
+```
+
+Independent of the other three upgrades — it only touches
+`hot_bag_maintenance`, which `schema.sql` has always created. Until this runs,
+Resolve / Reopen fails with "That change didn't save — check that the database
+schema is up to date."
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -301,7 +317,11 @@ the vehicle's condition, separate from whether it's currently checked out
 ## How to change hot bags
 
 Admin → **Hot Bags** has full CRUD: "+ Add Hot Bag" (name + cleaning
-window in days), **Edit**, and **Deactivate/Reactivate**. The cleaning
+window in days), **Edit**, and **Deactivate/Reactivate**. The Maintenance
+History table below it has **Resolve / Reopen** on each reported issue, which
+sets `status` and stamps or clears `resolved_at` — the same shape as driver
+incidents. Resolving is what clears an issue out of the dashboard's open-issue
+count; it never deletes the report, so the maintenance log stays complete. The cleaning
 window is per-bag — each bag has its own "needs cleaning after N days"
 (`clean_window_days`), so a high-volume bag can be set stricter than a
 spare. `HOT_BAG_CLEAN_WINDOW_DAYS` in `js/config.js` is only the prefill

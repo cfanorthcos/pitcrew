@@ -308,6 +308,50 @@ test('fetchDriverHistory is bounded and newest-first', async () => {
   assert.equal(order.options.ascending, false);
 });
 
+test('setHotBagIssueStatus resolves an issue and stamps resolved_at', async () => {
+  // The table shipped with a status column, a resolved_at column and a
+  // dashboard counting open issues, but no way to ever close one — so every
+  // reported issue stayed open forever.
+  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: { id: 'm-1' } } }));
+
+  await api.setHotBagIssueStatus('m-1', true);
+
+  assert.equal(calls[0].table, 'hot_bag_maintenance');
+  assert.equal(calls[0].op, 'update');
+  assert.equal(calls[0].payload.status, 'resolved');
+  assert.ok(calls[0].payload.resolved_at, 'resolved_at should be set');
+  assert.equal(findFilter(calls[0], 'id').value, 'm-1');
+});
+
+test('setHotBagIssueStatus clears resolved_at when an issue is reopened', async () => {
+  // A stale resolved_at on an open row would make the two columns disagree.
+  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: { id: 'm-1' } } }));
+
+  await api.setHotBagIssueStatus('m-1', false);
+
+  assert.equal(calls[0].payload.status, 'open');
+  assert.equal(calls[0].payload.resolved_at, null);
+});
+
+test('setHotBagIssueStatus surfaces a missing write policy instead of silently passing', async () => {
+  // hot_bag_maintenance had select/insert but no update policy, so this
+  // resolved to zero matched rows and PostgREST called it a success.
+  const { api } = setup(byTable({ hot_bag_maintenance: { error: pgError('PGRST116') } }));
+
+  await assert.rejects(() => api.setHotBagIssueStatus('m-1', true), /schema is up to date/i);
+});
+
+test('setHotBagIssueStatus never deletes the maintenance row', async () => {
+  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: { id: 'm-1' } } }));
+
+  await api.setHotBagIssueStatus('m-1', true);
+
+  assert.ok(
+    calls.every((c) => c.op !== 'delete'),
+    'the maintenance log is history and must never be deleted',
+  );
+});
+
 test('fetchHotBagMaintenanceHistory accepts a caller-supplied bound', async () => {
   const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: [] } }));
 

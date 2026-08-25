@@ -317,6 +317,17 @@ export function createDataApi(supabase) {
     if (error) throw error;
   }
 
+  // Resolving is an update, never a delete: the maintenance log is history.
+  // Mirrors setDriverIncidentStatus — same open/resolved pair, same nulling of
+  // the timestamp on reopen so a reopened issue doesn't keep a stale
+  // resolved_at.
+  async function setHotBagIssueStatus(id, resolved) {
+    await updateRowOrThrow('hot_bag_maintenance', id, {
+      status: resolved ? 'resolved' : 'open',
+      resolved_at: resolved ? new Date().toISOString() : null,
+    });
+  }
+
   async function fetchHotBagMaintenanceHistory(limit = HISTORY_PAGE_SIZE) {
     const { data, error } = await supabase
       .from('hot_bag_maintenance')
@@ -473,6 +484,7 @@ export function createDataApi(supabase) {
     fetchHotBags,
     markHotBagCleaned,
     reportHotBagIssue,
+    setHotBagIssueStatus,
     fetchHotBagMaintenanceHistory,
     fetchAllHotBags,
     createHotBag,
