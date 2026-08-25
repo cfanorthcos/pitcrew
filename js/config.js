@@ -24,4 +24,4 @@ export const SHIFT_OVERDUE_HOURS = 12;
 // same insert/update operations directly. This just keeps someone
 // wandering by the kiosk from poking at admin/edit screens. Change it here
 // before deploying; there's no admin UI for changing it.
-export const ADMIN_PIN = '4477';
+export const ADMIN_PIN = '3560';
