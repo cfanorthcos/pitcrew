@@ -35,10 +35,10 @@
   --color-neutral: #1f6fb2;
   --color-out: #7d766a;
 
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 26px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -47,12 +47,17 @@
   --space-5: 28px;
   --space-6: 40px;
 
-  --shadow-sm: 0 1px 2px rgba(32, 28, 22, 0.05), 0 2px 8px -4px rgba(32, 28, 22, 0.08);
-  --shadow-md: 0 2px 4px rgba(32, 28, 22, 0.05), 0 12px 28px -14px rgba(32, 28, 22, 0.22);
-  --shadow-lg: 0 4px 8px rgba(32, 28, 22, 0.06), 0 28px 56px -20px rgba(32, 28, 22, 0.32);
+  --shadow-sm: 0 1px 2px rgba(32, 28, 22, 0.04), 0 1px 3px rgba(32, 28, 22, 0.06);
+  --shadow-md: 0 2px 4px rgba(32, 28, 22, 0.04), 0 8px 24px -12px rgba(32, 28, 22, 0.18);
+  --shadow-lg: 0 4px 8px rgba(32, 28, 22, 0.05), 0 24px 48px -18px rgba(32, 28, 22, 0.28);
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif;
   --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+
+  /* Tracking for display-scale text. Large type set at body tracking reads
+     loose and cheap; these pull it back in. */
+  --track-display: -0.025em;
+  --track-eyebrow: 0.1em;
 
   font-family: var(--font-sans);
 }
@@ -120,6 +125,12 @@ button {
   box-shadow: var(--shadow-md);
 }
 
+/* Pushes the admin link to the far right, so the counts group with the clock
+   as one instrument cluster instead of spreading across the whole bar. */
+.rail > .rail-stats {
+  margin-left: auto;
+}
+
 .rail-brand {
   display: flex;
   align-items: center;
@@ -145,48 +156,71 @@ button {
   letter-spacing: 0.12em;
 }
 
+/* The label shrinks and the number grows: at six feet the digit is the only
+   part that has to survive, so it carries the weight. */
 .rail-stats {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: 0.92rem;
+  align-items: baseline;
+  gap: var(--space-4);
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
-  color: #b8b0a3;
+  color: #9c9488;
+}
+
+.rail-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .rail-stat b {
   color: #fff;
-  font-size: 1.35rem;
+  font-size: 2rem;
   font-weight: 800;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--track-display);
   font-variant-numeric: tabular-nums;
-  margin-right: 3px;
+  line-height: 1;
+}
+
+/* Out is the count that matters operationally -- tint it so a busy fleet is
+   legible without reading the label. */
+.rail-stat.is-out b {
+  color: #ffd9a8;
 }
 
 .rail-sep {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: #5c554a;
+  align-self: center;
+  width: 1px;
+  height: 22px;
+  border-radius: 0;
+  background: #3a352d;
 }
 
 .rail-clock {
-  color: #fff;
+  color: #cfc7ba;
+  font-size: 0.86rem;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
 }
 
 .rail-link {
-  color: #b8b0a3;
+  color: #9c9488;
   text-decoration: none;
-  letter-spacing: 0.06em;
-  padding: var(--space-2);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px #332e27;
+  transition: color 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
 
 .rail-link:hover {
   color: #fff;
+  box-shadow: inset 0 0 0 1px #57503f;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -194,7 +228,7 @@ button {
 /* -------------------------------------------------------------------------- */
 
 .app {
-  max-width: 1180px;
+  max-width: 1560px;
   margin: 0 auto;
   min-height: calc(100dvh - 64px);
   display: flex;
@@ -318,13 +352,24 @@ button {
 /* vehicle board — the command center                                         */
 /* -------------------------------------------------------------------------- */
 
+/* 290px min only fit three columns on an iPad in landscape, so a four-vehicle
+   fleet wrapped to 3 + 1 orphan and left the bottom half of a wall display
+   empty. 240px fits four, and `safe center` puts the slack above and below the
+   board instead of dumping all of it at the bottom -- with few vehicles that
+   reads as deliberate margin, and once the fleet outgrows the viewport it
+   falls back to normal top-aligned scrolling rather than clipping the first
+   row. */
 .vehicle-board {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  /* auto-fit, not auto-fill: auto-fill keeps empty trailing tracks, so a
+     four-vehicle fleet in a five-track row stayed hunched to the left with a
+     phantom column beside it. auto-fit collapses the empties and the tiles
+     stretch across the full width. */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--space-4);
   padding: var(--space-5);
   flex: 1;
-  align-content: start;
+  align-content: safe center;
 }
 
 @media (max-width: 560px) {
@@ -340,7 +385,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  min-height: 198px;
+  min-height: 150px;
   padding: var(--space-5) var(--space-4) 0;
   background: var(--color-surface);
   border: none;
@@ -372,9 +417,9 @@ button {
 }
 
 .tile:hover:not(:disabled) {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--status) 45%, var(--color-border)),
-    0 18px 40px -22px var(--status);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--status) 38%, var(--color-border)),
+    0 14px 32px -20px var(--status);
 }
 
 .tile:active:not(:disabled) {
@@ -392,7 +437,7 @@ button {
 .tile-band {
   position: absolute;
   inset: 0 0 auto;
-  height: 10px;
+  height: 8px;
   background: var(--vehicle-color, var(--color-border));
   /* Keeps the band readable for near-white vehicles, which would otherwise
      disappear into the tile surface. */
@@ -407,56 +452,67 @@ button {
 }
 
 .tile-name {
-  font-size: 1.6rem;
+  font-size: 2rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  letter-spacing: var(--track-display);
+  line-height: 1.05;
 }
 
 .tile-swatch {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   flex-shrink: 0;
   background: var(--vehicle-color, var(--color-border));
   box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 3px var(--color-border-strong);
 }
 
+/* Status sits directly under the name at display scale: it is the one thing
+   someone walking past is actually reading. */
 .tile-status {
-  font-size: 1.25rem;
+  font-size: 1.45rem;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--status);
+  line-height: 1.1;
 }
 
+/* Flexible spacer as well as content: it holds the driver and timer on an
+   in-use tile, and on an idle one it collapses to nothing but still pushes the
+   action bar to the bottom edge when a taller sibling sets the row height. */
 .tile-info {
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: 2px;
   flex: 1;
   padding-bottom: var(--space-3);
 }
 
+.tile-info:empty {
+  padding-bottom: var(--space-2);
+}
+
 .tile-driver {
-  font-size: 1.05rem;
-  font-weight: 600;
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: var(--color-text);
 }
 
-.tile-driver-idle {
-  color: var(--color-text-faint);
-  font-weight: 500;
-}
-
 .tile-timer {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   color: var(--color-text-muted);
 }
 
 .tile-timer b {
+  display: block;
+  font-size: 1.45rem;
   font-weight: 800;
+  letter-spacing: var(--track-display);
   font-variant-numeric: tabular-nums;
+  line-height: 1.15;
   color: var(--status);
 }
 
@@ -469,7 +525,7 @@ button {
   color: var(--status);
   font-size: 0.82rem;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
 }
 
@@ -600,25 +656,6 @@ button {
   width: auto;
 }
 
-.admin-link {
-  text-align: center;
-  padding: var(--space-4) var(--space-4) var(--space-6);
-}
-
-.admin-link a {
-  color: var(--color-text-faint);
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  text-decoration: none;
-  padding: var(--space-3);
-}
-
-.admin-link a:hover {
-  color: var(--color-text-muted);
-}
-
 /* -------------------------------------------------------------------------- */
 /* cards                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -724,6 +761,18 @@ select {
   min-height: 56px;
 }
 
+/* The native control kept its own arrow and platform chrome, which read as a
+   different design language from everything around it. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%236b6357' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-4) center;
+  background-size: 12px 8px;
+  padding-right: calc(var(--space-4) * 2 + 12px);
+}
+
 textarea:focus,
 input:focus,
 select:focus {
@@ -746,10 +795,20 @@ label.field-label {
 /* hot bags / slow tasks                                                      */
 /* -------------------------------------------------------------------------- */
 
+/* A single full-width column stretched each card to the full viewport, which
+   left a large hollow between the name and its badge and -- because .btn is
+   width:100% -- grew the two action buttons to ~600px each. A grid keeps the
+   cards at a readable measure and sizes the buttons sensibly as a
+   consequence. */
 .item-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  /* 440 rather than 360: at 360 a fourth column fitted, which squeezed the
+     two side-by-side action buttons until "Mark Cleaned" wrapped to two
+     lines. This holds two columns on an iPad and three on a desktop. */
+  grid-template-columns: repeat(auto-fit, minmax(440px, 520px));
+  justify-content: start;
   gap: var(--space-3);
+  align-content: start;
 }
 
 .item-card {
@@ -793,6 +852,7 @@ label.field-label {
 .item-card .actions .btn {
   min-height: 52px;
   font-size: 0.98rem;
+  white-space: nowrap;
 }
 
 .empty-state {

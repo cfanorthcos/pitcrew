@@ -137,16 +137,14 @@ function buildVehicleTile(vehicle) {
       <span class="tile-swatch" aria-hidden="true"></span>
     </span>
     <span class="tile-status">${status.label}</span>
-    <span class="tile-info">
-      ${
-        session
-          ? `<span class="tile-driver">${escapeHtml(session.drivers?.name ?? 'Unknown driver')}</span>
-             <span class="tile-timer"><b data-since="${escapeHtml(session.start_time)}">—</b> ${
-               status.key === 'overdue' ? 'without signing out' : 'on shift'
-             }</span>`
-          : `<span class="tile-driver tile-driver-idle">${escapeHtml(vehicle.color_name)}</span>`
-      }
-    </span>
+    <span class="tile-info">${
+      session
+        ? `<span class="tile-driver">${escapeHtml(session.drivers?.name ?? 'Unknown driver')}</span>` +
+          `<span class="tile-timer"><b data-since="${escapeHtml(session.start_time)}">—</b> ${
+            status.key === 'overdue' ? 'without signing out' : 'on shift'
+          }</span>`
+        : ''
+    }</span>
     <span class="tile-action">${status.action}</span>
   `;
 
