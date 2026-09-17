@@ -2,7 +2,7 @@
 //
 // Separate from js/render.js on purpose. That module holds the builders the
 // ADMIN dashboard is made of — tables, row-action clusters, the badge styles in
-// css/styles.css. The kiosk now has its own stylesheet and its own components
+// css/admin.css. The kiosk has its own stylesheet and its own components
 // (tinted pills, icon tiles, inset grouped rows), and folding both into one
 // module would mean every call site has to know which of two design systems a
 // given function belongs to.

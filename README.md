@@ -25,15 +25,21 @@ Pages directly.
 
 ```
 index.html            driver kiosk (single page, JS-driven view switching)
-admin.html            admin dashboard (single page, tab-driven sections)
+admin.html            admin dashboard (single page, grouped sidebar sections)
 manifest.webmanifest  PWA manifest, so the kiosk installs full-screen on iPad
 icon.svg              app icon referenced by the manifest
-css/styles.css        shared stylesheet
+css/kiosk.css         driver kiosk styles (iOS Light, wall-mounted density)
+css/admin.css         admin dashboard styles (same family, desktop density)
 package.json          marks the project as ESM and holds the test script only
 js/config.js          Supabase project URL + publishable key, tunables
 js/data.js            all data-access functions, as a factory over a client
 js/supabase.js        creates the live client and binds data.js to it
 js/ui.js              shared UI helpers (escaping, formatting, modals, banners)
+js/render.js          shared markup builders (tables, badges, form fields)
+js/kiosk-render.js    kiosk-only components (pills, icon tiles, grouped rows)
+js/icons.js           inline SVG icon set
+js/match.js           driver name matching for the kiosk identity screen
+js/version-watch.js   reloads the kiosk when a new version is deployed
 js/app.js             driver kiosk logic
 js/admin.js           admin dashboard logic
 tests/                node --test suite, no dependencies

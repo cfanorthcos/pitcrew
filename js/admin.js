@@ -1314,7 +1314,8 @@ const RENDERERS = {
 function showSection(key) {
   document.querySelectorAll('.admin-section').forEach((el) => el.classList.add('hidden'));
   document.getElementById(`section-${key}`).classList.remove('hidden');
-  window.scrollTo(0, 0);
+  // The main column scrolls now, not the window — the sidebar stays put.
+  document.getElementById('admin-main').scrollTop = 0;
 }
 
 function switchSection(key) {

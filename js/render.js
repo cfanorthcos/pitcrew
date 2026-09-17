@@ -35,7 +35,7 @@ export function attrs(map = {}) {
 // status badges
 // ---------------------------------------------------------------------------
 // tone is one of good | warn | bad | neutral | muted — the five that exist in
-// css/styles.css. An unknown tone would silently render an unstyled badge, so
+// css/admin.css. An unknown tone would silently render an unstyled badge, so
 // fall back to neutral rather than emitting a class that matches no rule.
 const BADGE_TONES = new Set(['good', 'warn', 'bad', 'neutral', 'muted']);
 
