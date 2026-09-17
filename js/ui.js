@@ -26,6 +26,26 @@ export function safeHex(value, fallback = '#b9b3a7') {
   return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(String(value ?? '')) ? value : fallback;
 }
 
+// Which ink stays readable on a given background.
+//
+// Vehicle colours are operator-chosen and cover the whole range: the kiosk
+// paints a car glyph onto a tile filled with the vehicle's own colour, and
+// hard-coding white meant "White Car" (#e8e6e1) rendered a white glyph on a
+// near-white tile — invisible on the wall. Relative luminance per WCAG, with
+// the usual 0.5-ish split.
+export function inkOn(hex, dark = '#1c1a16', light = '#ffffff') {
+  const raw = String(hex ?? '').replace('#', '');
+  const full = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw.slice(0, 6);
+  if (!/^[0-9a-f]{6}$/i.test(full)) return light;
+
+  const channel = (start) => {
+    const v = parseInt(full.slice(start, start + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  return luminance > 0.45 ? dark : light;
+}
+
 // ---------------------------------------------------------------------------
 // time formatting
 // ---------------------------------------------------------------------------

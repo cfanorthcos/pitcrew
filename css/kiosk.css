@@ -1,0 +1,996 @@
+/* ==========================================================================
+   PitCrew kiosk — iOS Light
+   ==========================================================================
+   This is the DRIVER kiosk only. admin.html still loads css/styles.css, which
+   is deliberate: the two surfaces stopped being one design when the kiosk went
+   wall-mounted. A driver reads this from six feet away with one free hand; an
+   admin reads dense tables at arm's length on a laptop. They share a brand and
+   a palette; they do not share components, and forcing them through one
+   stylesheet is what made every change to one risk the other.
+
+   Design rules that everything below follows:
+   - Type follows iOS proportions, scaled ~1.6x. iOS sizes assume arm's length.
+   - Controls live LOW. The tab bar is at the bottom because on a wall mount the
+     top of the screen is an arm-raise and the bottom is where hands already are.
+   - Hit targets never go below 60px. The standard 44pt minimum assumes a free
+     hand and dry fingers; this screen is used mid-shift in a food operation.
+   - Status is never carried by a small label alone — always a tinted pill plus
+     a colour, and usually an icon.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ground + surfaces */
+  --bg: #f4f2ee;
+  --surface: #ffffff;
+  --fill: #f2f2f7;
+  --fill-strong: #e5e5ea;
+  --separator: rgba(60, 60, 67, 0.29);
+
+  /* labels */
+  --label: #1c1a16;
+  --label-2: #6d6d72;
+  --label-3: #8e8e93;
+  --label-4: #c4c4c8;
+
+  /* brand tint */
+  --tint: #c8102e;
+  --tint-soft: rgba(200, 16, 46, 0.12);
+
+  /* iOS system status colours. The -ink variants are the darkened text
+     versions — #34c759 on white fails contrast as text, so the pill gets the
+     soft fill and the ink colour, never the raw system colour. */
+  --green: #34c759;
+  --green-ink: #248a43;
+  --green-soft: rgba(52, 199, 89, 0.16);
+  --orange: #ff9500;
+  --orange-ink: #b26a00;
+  --orange-soft: rgba(255, 149, 0, 0.16);
+  --blue: #007aff;
+  --blue-soft: rgba(0, 122, 255, 0.12);
+  --red: #ff3b30;
+  --red-soft: rgba(255, 59, 48, 0.1);
+  --gray-soft: rgba(142, 142, 147, 0.16);
+
+  --r-sm: 12px;
+  --r-md: 15px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+
+  --shadow-card: 0 1px 3px rgba(32, 28, 22, 0.06);
+  --shadow-sheet: 0 24px 64px -20px rgba(32, 28, 22, 0.4);
+
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI',
+    system-ui, Roboto, Helvetica, Arial, sans-serif;
+
+  /* type scale — iOS names, kiosk sizes */
+  --fs-large-title: clamp(34px, 3.9vw, 46px);
+  --fs-title: clamp(24px, 2.5vw, 30px);
+  --fs-card-title: clamp(22px, 2.3vw, 27px);
+  --fs-body-lg: clamp(19px, 1.95vw, 23px);
+  --fs-body: clamp(17px, 1.7vw, 20px);
+  --fs-sub: clamp(16px, 1.5vw, 18px);
+  --fs-foot: clamp(15px, 1.45vw, 17px);
+  --fs-cap: clamp(13px, 1.25vw, 15px);
+  --fs-section: 14px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+
+  font-family: var(--font);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--label);
+  font-size: var(--fs-body);
+  line-height: 1.4;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 3px solid var(--tint);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   shell
+   -------------------------------------------------------------------------- */
+.kiosk {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.k-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.k-panel {
+  display: none;
+  padding: 24px;
+  min-height: 100%;
+}
+
+.k-panel.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+   header — brand row on top, large title below
+   -------------------------------------------------------------------------- */
+.k-header {
+  flex: 0 0 auto;
+  background: var(--surface);
+  box-shadow: inset 0 -0.5px 0 var(--separator);
+}
+
+.k-navrow {
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 28px;
+}
+
+.k-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--label-3);
+}
+
+.k-brand svg {
+  display: block;
+}
+
+.k-clock {
+  font-size: 21px;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Back / Cancel, used on the flow screens in place of the brand row. */
+.k-navbtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 21px;
+  color: var(--tint);
+  min-height: 48px;
+  padding: 0 4px;
+}
+
+.k-navctx {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+.k-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+.k-titlerow {
+  padding: 0 28px 20px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.k-title {
+  margin: 0;
+  font-size: var(--fs-large-title);
+  font-weight: 700;
+  letter-spacing: -0.028em;
+  line-height: 1.05;
+}
+
+.k-trailing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 4px;
+  font-size: var(--fs-body);
+  color: var(--label-3);
+}
+
+.k-trailing b {
+  font-weight: 600;
+  color: var(--label);
+}
+
+/* fleet count pills */
+.k-stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--fill);
+  border-radius: 22px;
+  padding: 10px 19px;
+  font-size: var(--fs-sub);
+  color: var(--label-3);
+}
+
+.k-stat b {
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+  color: var(--label);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+/* --------------------------------------------------------------------------
+   bottom tab bar
+   -------------------------------------------------------------------------- */
+.k-tabbar {
+  flex: 0 0 auto;
+  height: 104px;
+  background: var(--surface);
+  box-shadow: inset 0 0.5px 0 var(--separator);
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.k-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--label-3);
+  transition: color 120ms var(--ease);
+}
+
+.k-tab[aria-selected='true'] {
+  color: var(--tint);
+}
+
+.k-tab-icon {
+  position: relative;
+  display: block;
+}
+
+.k-tab-label {
+  font-size: var(--fs-cap);
+  font-weight: 600;
+}
+
+.k-tab-badge {
+  position: absolute;
+  top: -5px;
+  right: -12px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--red);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+}
+
+/* --------------------------------------------------------------------------
+   cards + grids
+   -------------------------------------------------------------------------- */
+/* Fills the board so a single row of vehicles is full-height like the rest of
+   the wall display, while extra rows stay at a sane minimum and scroll. */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(258px, 1fr));
+  grid-auto-rows: minmax(300px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  flex: 1 1 auto;
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  min-height: 0;
+}
+
+.card.is-muted {
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: none;
+}
+
+.card-spacer {
+  flex: 1 1 auto;
+  min-height: 12px;
+}
+
+/* the rounded-square glyph tile at the top of every card */
+.icon-tile {
+  width: 58px;
+  height: 58px;
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.card-title {
+  font-size: var(--fs-card-title);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  margin-top: 16px;
+}
+
+.card-title.is-dim {
+  color: var(--label-3);
+}
+
+.card-meta {
+  font-size: var(--fs-sub);
+  color: var(--label-3);
+  margin-top: 12px;
+}
+
+.card-person {
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.card-timer {
+  font-size: var(--fs-sub);
+  color: var(--label-3);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-timer.is-overdue {
+  color: var(--orange-ink);
+}
+
+/* --------------------------------------------------------------------------
+   status pills
+   -------------------------------------------------------------------------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  padding: 6px 13px;
+  border-radius: 14px;
+  margin-top: 9px;
+}
+
+.pill-good {
+  color: var(--green-ink);
+  background: var(--green-soft);
+}
+
+.pill-warn {
+  color: var(--orange-ink);
+  background: var(--orange-soft);
+}
+
+.pill-info {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.pill-muted {
+  color: var(--label-2);
+  background: var(--gray-soft);
+}
+
+/* an open maintenance report, surfaced on the kiosk card itself */
+.flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--red-soft);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  margin-top: 12px;
+  font-size: var(--fs-foot);
+  font-weight: 600;
+  color: var(--tint);
+}
+
+/* --------------------------------------------------------------------------
+   buttons
+   -------------------------------------------------------------------------- */
+.btn {
+  min-height: 60px;
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: var(--fs-sub);
+  font-weight: 600;
+  padding: 0 24px;
+  width: 100%;
+  transition: opacity 120ms var(--ease), background 120ms var(--ease);
+}
+
+.btn:active:not(:disabled) {
+  opacity: 0.68;
+}
+
+.btn:disabled {
+  cursor: default;
+}
+
+.btn-go {
+  background: var(--green);
+  color: #fff;
+}
+
+.btn-fill {
+  background: var(--fill);
+  color: var(--label);
+}
+
+.btn-tint {
+  background: var(--fill);
+  color: var(--tint);
+}
+
+.btn-plain {
+  color: var(--tint);
+  background: none;
+  min-height: 54px;
+}
+
+.btn-primary {
+  background: var(--tint);
+  color: #fff;
+}
+
+.btn-quiet {
+  background: var(--fill-strong);
+  color: var(--label-3);
+}
+
+.btn-auto {
+  width: auto;
+}
+
+/* modal Cancel — quiet, but still a 60px target */
+.btn-ghost {
+  background: none;
+  color: var(--label-2);
+}
+
+.card .btn + .btn {
+  margin-top: 8px;
+}
+
+/* --------------------------------------------------------------------------
+   grouped lists — iOS inset style, used by identity / return / coming-up
+   -------------------------------------------------------------------------- */
+.group-head {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--label-3);
+  padding-left: 6px;
+  margin-bottom: 10px;
+  display: block;
+}
+
+.group-foot {
+  font-size: var(--fs-foot);
+  color: var(--label-3);
+  padding: 6px 6px 0;
+  line-height: 1.4;
+  display: block;
+}
+
+.group {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.row {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  width: 100%;
+  text-align: left;
+}
+
+.row + .row {
+  box-shadow: inset 0 0.5px 0 var(--separator);
+}
+
+/* The separator stops short of the leading avatar, the way iOS insets it. */
+.group.is-inset .row + .row {
+  box-shadow: inset 86px 0.5px 0 -85px var(--separator), inset 0 0.5px 0 var(--separator);
+}
+
+.row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row-title {
+  font-size: var(--fs-body-lg);
+}
+
+.row-title.is-strong {
+  font-weight: 600;
+}
+
+.row-sub {
+  font-size: var(--fs-foot);
+  color: var(--label-3);
+}
+
+.row-chevron {
+  flex: 0 0 auto;
+  color: var(--label-4);
+}
+
+.avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 25px;
+  background: var(--fill);
+  color: var(--label-2);
+  font-size: var(--fs-foot);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.avatar.is-go {
+  background: var(--green-soft);
+  color: var(--green-ink);
+}
+
+.avatar.is-tint {
+  background: var(--tint-soft);
+  color: var(--tint);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stack-gap {
+  margin-top: 18px;
+}
+
+/* --------------------------------------------------------------------------
+   search field
+   -------------------------------------------------------------------------- */
+.search {
+  min-height: 66px;
+  background: var(--fill);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+}
+
+.search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font-family: inherit;
+  font-size: var(--fs-body-lg);
+  color: var(--label);
+  padding: 18px 0;
+}
+
+.search input::placeholder {
+  color: var(--label-3);
+}
+
+.search-clear {
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  background: var(--label-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+/* --------------------------------------------------------------------------
+   return checklist
+   -------------------------------------------------------------------------- */
+.return-grid {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .return-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.check {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 22px;
+  width: 100%;
+  text-align: left;
+}
+
+.check + .check {
+  box-shadow: inset 80px 0.5px 0 -79px var(--separator), inset 0 0.5px 0 var(--separator);
+}
+
+.check-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 2.5px var(--label-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms var(--ease), box-shadow 120ms var(--ease);
+}
+
+.check[aria-checked='true'] .check-mark {
+  background: var(--green);
+  box-shadow: none;
+}
+
+.check-mark svg {
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+.check[aria-checked='true'] .check-mark svg {
+  opacity: 1;
+}
+
+.check-label {
+  font-size: var(--fs-body-lg);
+  color: var(--label-2);
+}
+
+.check[aria-checked='true'] .check-label {
+  color: var(--label);
+}
+
+.notes {
+  width: 100%;
+  min-height: 180px;
+  resize: none;
+  border: 0;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+  padding: 20px 22px;
+  font-family: inherit;
+  font-size: var(--fs-body);
+  color: var(--label);
+  outline: none;
+}
+
+.notes::placeholder {
+  color: var(--label-3);
+}
+
+/* --------------------------------------------------------------------------
+   wide feature card — the due slow task
+   -------------------------------------------------------------------------- */
+.feature {
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 26px;
+}
+
+.feature-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feature-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.feature-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.024em;
+}
+
+.feature-desc {
+  font-size: var(--fs-body);
+  color: var(--label-2);
+}
+
+.feature-meta {
+  font-size: var(--fs-sub);
+  color: var(--label-3);
+}
+
+.feature .pill {
+  margin-top: 0;
+}
+
+.feature .btn {
+  width: auto;
+  min-height: 66px;
+  font-size: var(--fs-body-lg);
+  padding: 0 34px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .feature {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .feature .btn {
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   empty + error states
+   -------------------------------------------------------------------------- */
+.empty {
+  padding: 64px 24px;
+  text-align: center;
+  font-size: var(--fs-body-lg);
+  color: var(--label-3);
+}
+
+/* --------------------------------------------------------------------------
+   modal sheet
+   -------------------------------------------------------------------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 26, 22, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  z-index: 60;
+}
+
+.modal-sheet {
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sheet);
+  width: min(620px, 100%);
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-sheet h2 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 700;
+  letter-spacing: -0.024em;
+}
+
+.modal-sheet .meta {
+  margin: 0;
+  font-size: var(--fs-sub);
+  color: var(--label-3);
+}
+
+.field-label {
+  display: block;
+  font-size: var(--fs-section);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--label-3);
+  margin-bottom: 8px;
+  padding-left: 6px;
+}
+
+.modal-sheet select,
+.modal-sheet input[type='text'],
+.modal-sheet textarea {
+  width: 100%;
+  min-height: 62px;
+  border: 0;
+  background: var(--fill);
+  border-radius: var(--r-md);
+  padding: 16px 18px;
+  font-family: inherit;
+  font-size: var(--fs-body);
+  color: var(--label);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.modal-sheet textarea {
+  min-height: 120px;
+  resize: none;
+}
+
+.modal-sheet select {
+  background-image: linear-gradient(45deg, transparent 50%, var(--label-3) 50%),
+    linear-gradient(135deg, var(--label-3) 50%, transparent 50%);
+  background-position: calc(100% - 26px) 55%, calc(100% - 18px) 55%;
+  background-size: 8px 8px, 8px 8px;
+  background-repeat: no-repeat;
+  padding-right: 52px;
+}
+
+/* the issue-type chooser */
+.option-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.option-btn {
+  min-height: 62px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  color: var(--label);
+  font-size: var(--fs-sub);
+  font-weight: 500;
+  padding: 0 16px;
+  box-shadow: inset 0 0 0 2px transparent;
+  transition: box-shadow 120ms var(--ease), color 120ms var(--ease);
+}
+
+.option-btn.selected {
+  box-shadow: inset 0 0 0 2px var(--tint);
+  color: var(--tint);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   banners
+   -------------------------------------------------------------------------- */
+#banner-region {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  pointer-events: none;
+}
+
+.banner {
+  pointer-events: auto;
+  max-width: min(720px, 92vw);
+  border-radius: var(--r-md);
+  padding: 18px 24px;
+  font-size: var(--fs-sub);
+  font-weight: 600;
+  color: #fff;
+  box-shadow: var(--shadow-sheet);
+  animation: banner-in 220ms var(--ease);
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+}
+
+.banner-error {
+  background: var(--tint);
+}
+
+.banner-success {
+  background: var(--green-ink);
+}
+
+.banner-offline {
+  background: var(--label-2);
+}

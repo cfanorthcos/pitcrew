@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   escapeHtml,
   safeHex,
+  inkOn,
   formatElapsed,
   formatRelativeDays,
   frequencyLabel,
@@ -165,4 +166,28 @@ test('frequencyLabel names the common cadences', () => {
   assert.equal(frequencyLabel(14), 'Every 2 weeks');
   assert.equal(frequencyLabel(30), 'Monthly');
   assert.equal(frequencyLabel(45), 'Every 45 days');
+});
+
+// ---------------------------------------------------------------------------
+// inkOn — contrast against operator-chosen vehicle colours
+// ---------------------------------------------------------------------------
+test('inkOn picks dark ink on a light fill and light ink on a dark one', () => {
+  // The bug this exists for: the kiosk painted a white car glyph onto a tile
+  // filled with the vehicle's own colour, so "White Car" (#e8e6e1) rendered
+  // white-on-near-white and vanished on the wall.
+  assert.equal(inkOn('#e8e6e1'), '#1c1a16', 'White Car must get dark ink');
+  assert.equal(inkOn('#1c1c1c'), '#ffffff', 'Black Car must get light ink');
+  assert.equal(inkOn('#c8102e'), '#ffffff', 'Red Car must get light ink');
+  assert.equal(inkOn('#1f6fb2'), '#ffffff', 'Blue Car must get light ink');
+});
+
+test('inkOn expands shorthand hex and tolerates junk', () => {
+  assert.equal(inkOn('#fff'), '#1c1a16');
+  assert.equal(inkOn('#000'), '#ffffff');
+  assert.equal(inkOn('not-a-colour'), '#ffffff', 'unparseable input falls back to light ink');
+  assert.equal(inkOn(null), '#ffffff');
+});
+
+test('inkOn ignores an alpha channel rather than misreading it as colour', () => {
+  assert.equal(inkOn('#e8e6e100'), '#1c1a16');
 });

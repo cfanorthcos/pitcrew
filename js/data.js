@@ -13,6 +13,11 @@
 // the fetch and let the UI say when it's truncated.
 export const HISTORY_PAGE_SIZE = 500;
 
+// How many recent sessions to scan when working out who drove lately. Sixty is
+// several days of a four-vehicle fleet — deep enough that the recent list is
+// stable, shallow enough to stay a cheap read on the identity screen.
+export const RECENT_SESSION_SCAN = 60;
+
 export function createDataApi(supabase) {
   // A plain `.update().eq('id', id)` with no matching RLS update policy
   // doesn't error — Postgres just matches zero rows and PostgREST reports
@@ -210,6 +215,32 @@ export function createDataApi(supabase) {
     if (data.length === 0) {
       throw new Error('That shift is already closed — the dashboard is out of date.');
     }
+  }
+
+  // Who drove most recently, newest first, deduplicated. The identity screen
+  // orders the roster by this so that on a churning roster most drivers never
+  // type anything: whoever drove this week is overwhelmingly who is driving now.
+  //
+  // Derived from driving_sessions rather than a denormalised "last drove" column
+  // on drivers — the answer is already here, and a cached copy would be one more
+  // thing every checkout has to remember to keep correct.
+  async function fetchRecentDriverIds(limit = RECENT_SESSION_SCAN) {
+    const { data, error } = await supabase
+      .from('driving_sessions')
+      .select('driver_id')
+      .order('start_time', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    const ordered = [];
+    const seen = new Set();
+    for (const row of data) {
+      if (row.driver_id && !seen.has(row.driver_id)) {
+        seen.add(row.driver_id);
+        ordered.push(row.driver_id);
+      }
+    }
+    return ordered;
   }
 
   async function fetchOpenSessions() {
@@ -506,6 +537,7 @@ export function createDataApi(supabase) {
     checkoutVehicle,
     forceCloseSession,
     fetchOpenSessions,
+    fetchRecentDriverIds,
     fetchChecklistItems,
     fetchAllChecklistItems,
     createChecklistItem,
