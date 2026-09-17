@@ -1,5 +1,10 @@
 import {
   fetchVehiclesWithAvailability,
+  createVehicle,
+  updateVehicle,
+  setVehicleStatus,
+  setVehicleActive,
+  VEHICLE_STATUSES,
   fetchOpenSessions,
   forceCloseSession,
   fetchAllDrivers,
@@ -37,6 +42,7 @@ import {
 import { HOT_BAG_CLEAN_WINDOW_DAYS, ADMIN_PIN, SHIFT_OVERDUE_HOURS } from './config.js';
 import {
   escapeHtml,
+  safeHex,
   formatDate,
   formatDateTime,
   frequencyLabel,
@@ -63,6 +69,7 @@ import {
   rowActions,
   field,
   textInput,
+  colorInput,
   numberInput,
   textArea,
   select,
@@ -219,23 +226,107 @@ function openForceCloseModal(session) {
 // vehicles
 // ---------------------------------------------------------------------------
 function vehicleStatusBadge(vehicle) {
+  if (!vehicle.active) return badge('Retired', 'muted');
   if (vehicle.activeSession) return badge('In Use', 'neutral');
   if (vehicle.status === 'available') return badge('Available', 'good');
   if (vehicle.status === 'needs_attention') return badge('Needs Attention', 'warn');
   return badge('Out of Service', 'bad');
 }
 
+function openVehicleModal(vehicle = null) {
+  const isEdit = Boolean(vehicle);
+  const sheet = openModal(
+    isEdit ? `Edit ${vehicle.name}` : 'Add a vehicle',
+    `
+      <h2>${isEdit ? 'Edit Vehicle' : 'Add Vehicle'}</h2>
+      ${field(
+        'Name',
+        'vehicle-name-input',
+        textInput({ id: 'vehicle-name-input', placeholder: 'e.g. Green Car', value: vehicle?.name ?? '' }),
+      )}
+      ${field(
+        'Colour name',
+        'vehicle-colorname-input',
+        textInput({
+          id: 'vehicle-colorname-input',
+          placeholder: 'e.g. Green',
+          value: vehicle?.color_name ?? '',
+        }),
+      )}
+      ${field(
+        'Colour on the board',
+        'vehicle-colorhex-input',
+        colorInput({ id: 'vehicle-colorhex-input', value: vehicle?.color_hex ?? '#2f8f4e' }),
+      )}
+      ${field(
+        'Status',
+        'vehicle-status-select',
+        select({
+          id: 'vehicle-status-select',
+          options: VEHICLE_STATUSES.map((s) => ({
+            value: s.value,
+            label: s.label,
+            selected: (vehicle?.status ?? 'available') === s.value,
+          })),
+        }),
+      )}
+      <p class="meta">
+        Status is the vehicle's condition. Whether it is checked out right now is
+        separate and works itself out from the driving sessions.
+      </p>
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Vehicle', 'vehicle-save-btn')}
+    `,
+  );
+
+  const saveBtn = sheet.querySelector('#vehicle-save-btn');
+  saveBtn.addEventListener('click', async () => {
+    const name = sheet.querySelector('#vehicle-name-input').value.trim();
+    const colorName = sheet.querySelector('#vehicle-colorname-input').value.trim();
+    if (!name) {
+      showError('Name is required.');
+      return;
+    }
+    if (!colorName) {
+      showError('Colour name is required.');
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const payload = {
+        name,
+        color_name: colorName,
+        color_hex: sheet.querySelector('#vehicle-colorhex-input').value,
+        status: sheet.querySelector('#vehicle-status-select').value,
+      };
+      if (isEdit) await updateVehicle(vehicle.id, payload);
+      else await createVehicle(payload);
+      closeModal();
+      showSuccess(isEdit ? 'Vehicle updated.' : `${name} added.`);
+      await renderVehicles();
+    } catch (err) {
+      showError(err.message || 'Could not save this vehicle. Try again.');
+      saveBtn.disabled = false;
+      saveBtn.textContent = isEdit ? 'Save Changes' : 'Add Vehicle';
+    }
+  });
+}
+
 async function renderVehicles() {
   const container = document.getElementById('section-vehicles');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const vehicles = await fetchVehiclesWithAvailability();
+    const vehicles = await fetchVehiclesWithAvailability({ includeInactive: true });
     const rows = vehicles
       .map((v) => {
+        const offRoad = v.status === 'out_of_service';
         return `
-          <tr class="clickable" data-vehicle-id="${escapeHtml(v.id)}">
+          <tr class="clickable ${v.active ? '' : 'is-inactive'}" data-vehicle-id="${escapeHtml(v.id)}">
             <td><strong>${escapeHtml(v.name)}</strong></td>
-            <td>${escapeHtml(v.color_name)}</td>
+            <td>
+              <span class="color-chip" style="background:${escapeHtml(safeHex(v.color_hex))}"></span>
+              ${escapeHtml(v.color_name)}
+            </td>
             <td>${vehicleStatusBadge(v)}</td>
             <td>${v.activeSession ? escapeHtml(v.activeSession.drivers?.name ?? '—') : '—'}</td>
             <td>${v.activeSession ? formatDateTime(v.activeSession.start_time) : '—'}</td>
@@ -244,23 +335,79 @@ async function renderVehicles() {
                 ? `<span class="elapsed" data-since="${escapeHtml(v.activeSession.start_time)}">—</span>`
                 : '—'
             }</td>
+            <td>${rowActions([
+              { label: 'Edit', className: 'edit-vehicle-btn', data: { 'data-vehicle-id': v.id } },
+              // The urgent path gets its own one-tap button. A car comes off the
+              // road mid-shift on a Saturday, not at a desk with time to open a
+              // modal — "Needs Attention" is the nuanced case and lives in Edit.
+              v.active && {
+                label: offRoad ? 'Return to service' : 'Take off road',
+                className: 'road-vehicle-btn',
+                data: { 'data-vehicle-id': v.id, 'data-to': offRoad ? 'available' : 'out_of_service' },
+              },
+              {
+                label: v.active ? 'Retire' : 'Restore',
+                className: 'toggle-vehicle-btn',
+                data: { 'data-vehicle-id': v.id },
+              },
+            ])}</td>
           </tr>
         `;
       })
       .join('');
 
     container.innerHTML = `
-      ${sectionToolbar('Vehicles', sectionHint('Tap a row for its full driving history.'))}
+      ${sectionToolbar('Vehicles', actionButton('+ Add Vehicle', 'add-vehicle-btn'))}
+      ${sectionHint('Tap a row for its full driving history. Retiring keeps the history and takes it off the kiosk.')}
       ${dataTable({
-        columns: ['Vehicle', 'Color', 'Status', 'Current Driver', 'Shift Started', 'Elapsed'],
+        columns: ['Vehicle', 'Color', 'Status', 'Current Driver', 'Shift Started', 'Elapsed', 'Actions'],
         rows,
         empty: 'No vehicles configured.',
       })}
     `;
 
+    container.querySelector('#add-vehicle-btn').addEventListener('click', () => openVehicleModal());
+
     container.querySelectorAll('tr[data-vehicle-id]').forEach((row) => {
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('.row-actions')) return;
         showVehicleDetail(vehicles.find((v) => v.id === row.dataset.vehicleId));
+      });
+    });
+
+    container.querySelectorAll('.edit-vehicle-btn').forEach((btn) => {
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openVehicleModal(vehicles.find((v) => v.id === btn.dataset.vehicleId));
+      });
+    });
+
+    container.querySelectorAll('.road-vehicle-btn').forEach((btn) => {
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        btn.disabled = true;
+        try {
+          await setVehicleStatus(btn.dataset.vehicleId, btn.dataset.to);
+          await renderVehicles();
+        } catch (err) {
+          showError(err.message || 'Could not update this vehicle. Try again.');
+          btn.disabled = false;
+        }
+      });
+    });
+
+    container.querySelectorAll('.toggle-vehicle-btn').forEach((btn) => {
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const vehicle = vehicles.find((v) => v.id === btn.dataset.vehicleId);
+        btn.disabled = true;
+        try {
+          await setVehicleActive(vehicle.id, !vehicle.active);
+          await renderVehicles();
+        } catch (err) {
+          showError(err.message || 'Could not update this vehicle. Try again.');
+          btn.disabled = false;
+        }
       });
     });
     refreshTickers();

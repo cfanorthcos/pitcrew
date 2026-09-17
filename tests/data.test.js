@@ -440,3 +440,87 @@ test('the open-row reads select only what the counts need', async () => {
   assert.equal(calls[0].columns, 'id, driver_id');
   assert.equal(calls[1].columns, 'id, bag_id');
 });
+
+// ---------------------------------------------------------------------------
+// vehicles CRUD
+//
+// Vehicles were the last table with no client write path — taking a car off the
+// road needed the Supabase SQL editor, which is the wrong tool for a Saturday.
+// ---------------------------------------------------------------------------
+test('fetchVehiclesWithAvailability hides retired vehicles from the kiosk by default', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: [] }, driving_sessions: { data: [] } }));
+
+  await api.fetchVehiclesWithAvailability();
+
+  const vehicleCall = calls.find((c) => c.table === 'vehicles');
+  assert.equal(findFilter(vehicleCall, 'active').value, true);
+});
+
+test('fetchVehiclesWithAvailability includes retired vehicles for admin, active first', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: [] }, driving_sessions: { data: [] } }));
+
+  await api.fetchVehiclesWithAvailability({ includeInactive: true });
+
+  const vehicleCall = calls.find((c) => c.table === 'vehicles');
+  assert.equal(findFilter(vehicleCall, 'active'), undefined, 'must not filter retired rows out');
+  const orders = vehicleCall.modifiers.filter((m) => m.type === 'order');
+  assert.equal(orders[0].column, 'active');
+  assert.equal(orders[0].options.ascending, false);
+  assert.equal(orders[1].column, 'name');
+});
+
+test('createVehicle writes the four columns the board reads', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
+
+  await api.createVehicle({
+    name: 'Green Car',
+    color_name: 'Green',
+    color_hex: '#2f8f4e',
+    status: 'available',
+  });
+
+  assert.equal(calls[0].op, 'insert');
+  assert.deepEqual(calls[0].payload, {
+    name: 'Green Car',
+    color_name: 'Green',
+    color_hex: '#2f8f4e',
+    status: 'available',
+  });
+});
+
+test('createVehicle defaults a new vehicle to available', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
+
+  await api.createVehicle({ name: 'Green Car', color_name: 'Green', color_hex: '#2f8f4e' });
+
+  assert.equal(calls[0].payload.status, 'available');
+});
+
+test('setVehicleStatus is the one-tap off-road path and only touches status', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
+
+  await api.setVehicleStatus('v-1', 'out_of_service');
+
+  assert.equal(calls[0].op, 'update');
+  assert.deepEqual(calls[0].payload, { status: 'out_of_service' });
+  assert.equal(findFilter(calls[0], 'id').value, 'v-1');
+});
+
+test('setVehicleActive retires rather than deletes — sessions still point here', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
+
+  await api.setVehicleActive('v-1', false);
+
+  assert.deepEqual(calls[0].payload, { active: false });
+  assert.ok(calls.every((c) => c.op !== 'delete'));
+});
+
+test('vehicle writes surface a missing RLS policy instead of silently passing', async () => {
+  // vehicles had select-only policies until this feature existed, so a project
+  // that has not run the migration would otherwise report a cheerful success
+  // while changing nothing.
+  const { api } = setup(byTable({ vehicles: { error: pgError('PGRST116') } }));
+
+  await assert.rejects(() => api.setVehicleStatus('v-1', 'out_of_service'), /schema is up to date/i);
+  await assert.rejects(() => api.setVehicleActive('v-1', false), /schema is up to date/i);
+});

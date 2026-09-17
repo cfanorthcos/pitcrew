@@ -188,6 +188,29 @@ Independent of the other three upgrades — it only touches
 Resolve / Reopen fails with "That change didn't save — check that the database
 schema is up to date."
 
+### Fifth upgrade: managing vehicles from the app
+
+Gives `vehicles` a client write path for the first time. Safe to re-run, and
+independent of the other four.
+
+```sql
+drop policy if exists vehicles_insert on public.vehicles;
+create policy vehicles_insert on public.vehicles for insert with check (true);
+
+drop policy if exists vehicles_update on public.vehicles;
+create policy vehicles_update on public.vehicles for update using (true) with check (true);
+```
+
+Until this runs, the Vehicles screen still lists the fleet and its history
+(reads were always allowed) but **+ Add Vehicle**, **Edit**, **Take off road**
+and **Retire** all fail with "That change didn't save — check that the database
+schema is up to date."
+
+Note what this widens: vehicles were the last table the publishable key could
+not write to. See "Security considerations" below — this is a deliberate
+trade of one more unauthenticated write path for not needing a developer to
+take a car off the road.
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -303,16 +326,32 @@ update checklist_items set active = false where label = 'Old item'; -- retire
 
 ## How to change vehicles
 
+Admin → **Vehicles** has full CRUD: "+ Add Vehicle" (name, colour name, the
+colour the kiosk board paints, and status), **Edit**, and **Retire / Restore**.
+
+**Take off road** is a separate one-tap button on each row, and it exists
+because that edit is the time-critical one: a car comes off the road mid-shift
+on a Saturday, not at a desk with time to open a dialog. It flips between
+`available` and `out_of_service`. `needs_attention` is the nuanced case and
+lives in **Edit**.
+
+Retiring is not deleting: `driving_sessions` rows reference `vehicles.id`, so
+history has to keep resolving to a real vehicle. A retired vehicle disappears
+from the kiosk board and stays in admin so it can be brought back.
+
+`status` is one of `available`, `needs_attention`, `out_of_service` — it's
+the vehicle's condition, separate from whether it's currently checked out
+(that's derived automatically from `driving_sessions`). An out-of-service
+vehicle can still have an open session; the driver returns it normally.
+
+Equivalent SQL, if you'd rather:
+
 ```sql
 insert into vehicles (name, color_name, color_hex)
   values ('Green Car', 'Green', '#2f8f4e');
 update vehicles set status = 'out_of_service' where name = 'Blue Car';
 update vehicles set active = false where name = 'Old Van'; -- soft-remove
 ```
-
-`status` is one of `available`, `needs_attention`, `out_of_service` — it's
-the vehicle's condition, separate from whether it's currently checked out
-(that's derived automatically from `driving_sessions`).
 
 ## How to change hot bags
 
@@ -364,11 +403,13 @@ exactly the operations each screen needs (see the comments in
 - No table allows `delete` from the client — history is permanent.
   "Deactivating" a driver/hot bag/slow task is always an `update` setting
   `active = false`, never a row delete.
-- Vehicles are still **read-only** from the client; they're only ever
-  changed via direct SQL. Everything else the app writes
-  to — drivers, hot bags, slow tasks, **return-checklist items**, sessions,
-  maintenance reports, completions, **driver incidents** — is reachable by anyone with the
-  publishable key, whether or not they ever open `admin.html`. Driver
+- **Every table the app writes is now reachable by anyone with the
+  publishable key**, whether or not they ever open `admin.html`: drivers,
+  **vehicles**, hot bags, slow tasks, return-checklist items, sessions,
+  maintenance reports, completions, and driver incidents. Vehicles were the
+  last read-only table and stopped being one when admin got vehicle CRUD —
+  which means the kiosk board's contents are now writable with the same key
+  the kiosk ships. Driver
   incidents are the most sensitive data in this schema (customer names,
   complaint details tied to a specific employee) and get exactly the same
   `using (true)` policy as everything else — worth prioritizing first if

@@ -18,6 +18,7 @@ import {
   rowActions,
   field,
   textInput,
+  colorInput,
   numberInput,
   textArea,
   select,
@@ -180,4 +181,15 @@ test('modalActions can start its primary disabled', () => {
 
 test('modalActions takes a custom cancel label', () => {
   assert.ok(modalActions('Go', 'g', { cancelLabel: 'Never mind' }).includes('Never mind'));
+});
+
+test('colorInput rejects anything type="color" would silently turn black', () => {
+  // A colour well accepts only 6-digit hex. Shorthand, named colours and junk
+  // all fall back to #000000 with no error, which would quietly repaint a
+  // vehicle black on the board the next time somebody saved the row.
+  assert.ok(colorInput({ id: 'c', value: '#2f8f4e' }).includes('value="#2f8f4e"'));
+  assert.ok(colorInput({ id: 'c', value: '#fff' }).includes('value="#000000"'));
+  assert.ok(colorInput({ id: 'c', value: 'rebeccapurple' }).includes('value="#000000"'));
+  assert.ok(colorInput({ id: 'c', value: null }).includes('value="#000000"'));
+  assert.ok(colorInput({ id: 'c' }).includes('type="color"'));
 });

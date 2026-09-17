@@ -18,6 +18,15 @@ export const HISTORY_PAGE_SIZE = 500;
 // stable, shallow enough to stay a cheap read on the identity screen.
 export const RECENT_SESSION_SCAN = 60;
 
+// The vehicle_status enum in sql/schema.sql, with the labels the admin shows.
+// Kept beside the data layer so adding a status means touching one list, not
+// hunting for every place the raw column value gets turned into words.
+export const VEHICLE_STATUSES = [
+  { value: 'available', label: 'Available' },
+  { value: 'needs_attention', label: 'Needs Attention' },
+  { value: 'out_of_service', label: 'Out of Service' },
+];
+
 export function createDataApi(supabase) {
   // A plain `.update().eq('id', id)` with no matching RLS update policy
   // doesn't error — Postgres just matches zero rows and PostgREST reports
@@ -159,10 +168,18 @@ export function createDataApi(supabase) {
     });
   }
 
-  async function fetchVehiclesWithAvailability() {
+  // The kiosk board shows active vehicles only. The admin Vehicles screen passes
+  // includeInactive so retired ones stay reachable and can be brought back —
+  // they are never deleted, because driving_sessions still point at them.
+  async function fetchVehiclesWithAvailability({ includeInactive = false } = {}) {
+    let vehicleQuery = supabase.from('vehicles').select('*');
+    if (includeInactive) vehicleQuery = vehicleQuery.order('active', { ascending: false });
+    else vehicleQuery = vehicleQuery.eq('active', true);
+    vehicleQuery = vehicleQuery.order('name');
+
     const [{ data: vehicles, error: vErr }, { data: openSessions, error: sErr }] =
       await Promise.all([
-        supabase.from('vehicles').select('*').eq('active', true).order('name'),
+        vehicleQuery,
         supabase
           .from('driving_sessions')
           .select('id, vehicle_id, driver_id, start_time, drivers(name)')
@@ -173,6 +190,39 @@ export function createDataApi(supabase) {
 
     const sessionByVehicle = new Map(openSessions.map((s) => [s.vehicle_id, s]));
     return vehicles.map((v) => ({ ...v, activeSession: sessionByVehicle.get(v.id) || null }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // admin: vehicles CRUD
+  //
+  // Vehicles were reference data edited only in the Supabase SQL editor for far
+  // too long. Taking a car off the road is the most time-critical edit in the
+  // app — it happens on a Saturday, not at a desk — and it was the one thing
+  // that needed a developer.
+  // ---------------------------------------------------------------------------
+  async function createVehicle({ name, color_name, color_hex, status = 'available' }) {
+    const { data, error } = await supabase
+      .from('vehicles')
+      .insert({ name, color_name, color_hex, status })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function updateVehicle(id, { name, color_name, color_hex, status }) {
+    await updateRowOrThrow('vehicles', id, { name, color_name, color_hex, status });
+  }
+
+  // Status is the vehicle's condition. Whether it is currently checked out is a
+  // separate thing entirely, derived from driving_sessions — an out-of-service
+  // car can still have an open session that a driver needs to close normally.
+  async function setVehicleStatus(id, status) {
+    await updateRowOrThrow('vehicles', id, { status });
+  }
+
+  async function setVehicleActive(id, active) {
+    await updateRowOrThrow('vehicles', id, { active });
   }
 
   // ---------------------------------------------------------------------------
@@ -534,6 +584,10 @@ export function createDataApi(supabase) {
     updateDriverIncident,
     setDriverIncidentStatus,
     fetchVehiclesWithAvailability,
+    createVehicle,
+    updateVehicle,
+    setVehicleStatus,
+    setVehicleActive,
     checkoutVehicle,
     forceCloseSession,
     fetchOpenSessions,

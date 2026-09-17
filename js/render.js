@@ -139,6 +139,15 @@ export function numberInput({ id, value = '', min = null, placeholder = null }) 
   return `<input${attrs({ type: 'number', id, min, placeholder, value: String(value ?? '') })} />`;
 }
 
+// A native colour well. The value must be a 6-digit hex — type="color" silently
+// falls back to #000000 for shorthand (#fff), named colours or junk, so the
+// caller normalises before rendering rather than watching a vehicle quietly
+// turn black on save.
+export function colorInput({ id, value = '#000000' }) {
+  const hex = /^#[0-9a-f]{6}$/i.test(String(value ?? '')) ? value : '#000000';
+  return `<input${attrs({ type: 'color', id, value: hex })} />`;
+}
+
 export function textArea({ id, value = '', placeholder = null }) {
   return `<textarea${attrs({ id, placeholder })}>${escapeHtml(value ?? '')}</textarea>`;
 }

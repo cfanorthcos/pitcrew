@@ -7,11 +7,11 @@
 // mid-shift with no deploy on our side. Bump this deliberately and test.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.112.3';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
-import { createDataApi, HISTORY_PAGE_SIZE, RECENT_SESSION_SCAN } from './data.js';
+import { createDataApi, HISTORY_PAGE_SIZE, RECENT_SESSION_SCAN, VEHICLE_STATUSES } from './data.js';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
-export { HISTORY_PAGE_SIZE, RECENT_SESSION_SCAN };
+export { HISTORY_PAGE_SIZE, RECENT_SESSION_SCAN, VEHICLE_STATUSES };
 
 export const {
   fetchActiveDrivers,
@@ -26,6 +26,10 @@ export const {
   updateDriverIncident,
   setDriverIncidentStatus,
   fetchVehiclesWithAvailability,
+  createVehicle,
+  updateVehicle,
+  setVehicleStatus,
+  setVehicleActive,
   checkoutVehicle,
   forceCloseSession,
   fetchOpenSessions,

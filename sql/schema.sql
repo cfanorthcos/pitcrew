@@ -199,9 +199,11 @@ alter table public.driver_incidents enable row level security;
 alter table public.slow_tasks enable row level security;
 alter table public.slow_task_completions enable row level security;
 
--- Vehicles are read-only reference data, managed by an operator directly in the
--- Supabase SQL editor (see README) — there is no create/edit UI for them, so no
--- client write policy is needed.
+-- Vehicles now have admin CRUD like everything else. They were SQL-only for
+-- longer than they should have been: taking a car off the road is the most
+-- time-critical edit in the whole app and it was the one thing that needed a
+-- developer. Never delete — deactivating sets active = false so the driving
+-- history keeps resolving to a real vehicle.
 --
 -- Drivers, hot bags, and slow tasks get full admin CRUD (select/insert/
 -- update, never delete — deactivating sets active = false so history stays
@@ -211,6 +213,8 @@ create policy drivers_select on public.drivers for select using (true);
 create policy drivers_insert on public.drivers for insert with check (true);
 create policy drivers_update on public.drivers for update using (true) with check (true);
 create policy vehicles_select on public.vehicles for select using (true);
+create policy vehicles_insert on public.vehicles for insert with check (true);
+create policy vehicles_update on public.vehicles for update using (true) with check (true);
 create policy checklist_items_select on public.checklist_items for select using (true);
 -- The return checklist is edited from admin (label, order, active). No delete:
 -- historical driving_session_checklist_items rows must keep resolving to a real
