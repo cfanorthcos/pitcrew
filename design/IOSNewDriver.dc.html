@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', system-ui, sans-serif; }
+    a { color: #c8102e; } a:hover { color: #9c0c23; }
+    .num { font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width: 1194px; height: 834px; background: #f4f2ee; color: #1c1a16; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="flex-shrink: 0; background: #ffffff; box-shadow: inset 0 -0.5px 0 rgba(60,60,67,0.29);">
+    <div style="height: 62px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;">
+      <div style="display: flex; align-items: center; gap: 4px; color: #c8102e;">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M14.5 5.5L8 12l6.5 6.5" stroke="#c8102e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        <span style="font-size: 21px;">Vehicles</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="width: 22px; height: 22px; border-radius: 6px; background: #1f6fb2;"></span>
+        <span style="font-size: 21px; font-weight: 600;">Blue Car</span>
+      </div>
+      <span style="font-size: 21px; color: #c8102e;">Cancel</span>
+    </div>
+    <div style="padding: 4px 28px 22px;">
+      <div style="height: 66px; background: #f2f2f7; border-radius: 16px; display: flex; align-items: center; gap: 12px; padding: 0 20px;">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="10.8" cy="10.8" r="6.6" stroke="#8e8e93" stroke-width="2"></circle>
+          <path d="M15.6 15.6L20.5 20.5" stroke="#8e8e93" stroke-width="2" stroke-linecap="round"></path>
+        </svg>
+        <span style="font-size: 23px; flex-grow: 1;">Mike Smith</span>
+        <span style="width: 30px; height: 30px; border-radius: 15px; background: #c4c4c8; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M7.5 7.5l9 9M16.5 7.5l-9 9" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"></path>
+          </svg>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; padding: 24px 28px; display: flex; flex-direction: column; gap: 10px;">
+
+    <span style="font-size: 14px; font-weight: 600; letter-spacing: 0.06em; color: #8e8e93; padding-left: 6px;">DID YOU MEAN</span>
+
+    <div style="background: #ffffff; border-radius: 18px; box-shadow: 0 1px 3px rgba(32,28,22,0.06); height: 112px; display: flex; align-items: center; gap: 18px; padding: 0 22px;">
+      <span style="width: 62px; height: 62px; border-radius: 31px; background: rgba(52,199,89,0.16); color: #248a43; font-size: 22px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">MS</span>
+      <div style="display: flex; flex-direction: column; flex-grow: 1; gap: 2px;">
+        <span style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Michael Smith</span>
+        <span style="font-size: 18px; color: #8e8e93;">Employee 1042 &middot; last drove yesterday</span>
+      </div>
+      <span style="height: 58px; padding: 0 30px; border-radius: 15px; background: #34c759; color: #ffffff; font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 12.5l4.2 4.2L19 7" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        That&#39;s me
+      </span>
+    </div>
+
+    <span style="font-size: 17px; color: #8e8e93; padding: 4px 6px 0; line-height: 1.4;">Someone already on the roster has a very similar name. Starting a second record splits your shift history and your incident count across both.</span>
+
+    <span style="font-size: 14px; font-weight: 600; letter-spacing: 0.06em; color: #8e8e93; padding-left: 6px; margin-top: 16px;">OR</span>
+
+    <div style="background: #ffffff; border-radius: 18px; box-shadow: 0 1px 3px rgba(32,28,22,0.06); height: 100px; display: flex; align-items: center; gap: 18px; padding: 0 22px;">
+      <span style="width: 54px; height: 54px; border-radius: 27px; background: rgba(200,16,46,0.12); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 5.5v13M5.5 12h13" stroke="#c8102e" stroke-width="2.2" stroke-linecap="round"></path>
+        </svg>
+      </span>
+      <div style="display: flex; flex-direction: column; flex-grow: 1; gap: 2px;">
+        <span style="font-size: 23px; font-weight: 500;">No &mdash; I&#39;m new. Add me as <b>Mike Smith</b>.</span>
+        <span style="font-size: 18px; color: #8e8e93;">Creates a new driver and starts your shift.</span>
+      </div>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M9.5 5.5L16 12l-6.5 6.5" stroke="#c4c4c8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

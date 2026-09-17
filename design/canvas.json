@@ -1,0 +1,131 @@
+{
+  "pages": [
+    { "id": "page-4", "name": "Kiosk — iOS Light" },
+    { "id": "page-1", "name": "Explorations" }
+  ],
+  "artboards": [
+    { "file": "IOSLight.dc.html", "title": "Vehicles — resting state", "page": "page-4", "x": 0, "y": 0, "w": 1194, "h": 834 },
+    { "file": "IOSHotBags.dc.html", "title": "Hot Bags", "page": "page-4", "x": 1294, "y": 0, "w": 1194, "h": 834 },
+    { "file": "IOSSlowTasks.dc.html", "title": "Slow Tasks", "page": "page-4", "x": 2588, "y": 0, "w": 1194, "h": 834 },
+
+    { "file": "IOSIdentity.dc.html", "title": "Who's driving", "page": "page-4", "x": 0, "y": 1150, "w": 1194, "h": 834 },
+    { "file": "IOSNewDriver.dc.html", "title": "Near-duplicate catch", "page": "page-4", "x": 1294, "y": 1150, "w": 1194, "h": 834 },
+    { "file": "IOSReturn.dc.html", "title": "Return checklist", "page": "page-4", "x": 2588, "y": 1150, "w": 1194, "h": 834 },
+
+    { "file": "Main.dc.html", "title": "Option A — Instrument Panel", "page": "page-1", "x": 0, "y": 0, "w": 1194, "h": 834 },
+    { "file": "BoardWarm.dc.html", "title": "Option B — Signal Cards", "page": "page-1", "x": 1294, "y": 0, "w": 1194, "h": 834 },
+    { "file": "BoardDispatch.dc.html", "title": "Option C — Dispatch Board", "page": "page-1", "x": 2588, "y": 0, "w": 1194, "h": 834 },
+    { "file": "IOSDim.dc.html", "title": "A3 — iOS Dim (not taken)", "page": "page-1", "x": 3882, "y": 0, "w": 1194, "h": 834 },
+
+    { "file": "Identity.dc.html", "title": "Identity — pre-iOS", "page": "page-1", "x": 0, "y": 1150, "w": 1194, "h": 834 },
+    { "file": "NewDriver.dc.html", "title": "Duplicate catch — pre-iOS", "page": "page-1", "x": 1294, "y": 1150, "w": 1194, "h": 834 },
+    { "file": "Return.dc.html", "title": "Return — pre-iOS", "page": "page-1", "x": 2588, "y": 1150, "w": 1194, "h": 834 }
+  ],
+  "annotations": [
+    {
+      "id": "c-system",
+      "page": "page-4",
+      "x": 0,
+      "y": -270,
+      "w": 680,
+      "text": "The complete kiosk, iOS Light. Top row is the three tabs; bottom row is the check-out and return flow.\n\nOne system throughout — SF on iOS proportions scaled ~1.6x for six-foot reading, 22px cards on an 18px grouped ground, hairline separators inset to the content edge, tinted pill badges, CFA red as the tint, iOS system colors for status.\n\nAll three tabs now share one header: brand lockup and clock on the nav row, section name as the large title, live context trailing it. The board's old header made the tab name an eyebrow over \"PitCrew\", which had nowhere to go once there were three of them."
+    },
+    {
+      "id": "c-board",
+      "page": "page-4",
+      "x": 0,
+      "y": 880,
+      "w": 440,
+      "text": "Resting state. This is what's on the wall all day, so an idle timeout should always return here — that's what keeps it an ambient display rather than whatever screen the last person left open.\n\nBadge dots carry the other two tabs' counts so nobody has to open them to know there's work."
+    },
+    {
+      "id": "c-hotbags",
+      "page": "page-4",
+      "x": 1294,
+      "y": 880,
+      "w": 440,
+      "text": "Same card grid as the board, so the two tabs share a rhythm. Status drives the icon tint, the pill, and which action is filled — a bag that's current gets a quiet \"Mark clean\"; one that's overdue gets the green button.\n\nBag 04 shows the addition worth arguing for: an open maintenance report is currently INVISIBLE on the kiosk. A driver reports a torn bag and the card still reads normal until an admin happens to look. The data is already in hot_bag_maintenance.status — this just surfaces it where the person holding the bag can see it."
+    },
+    {
+      "id": "c-slowtasks",
+      "page": "page-4",
+      "x": 2588,
+      "y": 880,
+      "w": 440,
+      "text": "Due work gets one big card with the description visible — right now the kiosk shows the description but buries the action in a modal.\n\nProposed, and easy to drop: a \"Coming up\" section. The kiosk currently hides everything not yet due, so someone with ten spare minutes between runs can't pull work forward. On a station-side screen that seems like a waste of the one moment they're standing there with time."
+    },
+    {
+      "id": "c-identity",
+      "page": "page-4",
+      "x": 0,
+      "y": 2030,
+      "w": 440,
+      "text": "One field finds an existing driver AND adds a new one. Recent-first, not alphabetical — with a churning roster, whoever drove this week is whoever is driving today, so most people never type.\n\n\"I'm not on this list\" is a normal row, not a buried last option in a wheel picker."
+    },
+    {
+      "id": "c-newdriver",
+      "page": "page-4",
+      "x": 1294,
+      "y": 2030,
+      "w": 440,
+      "text": "The churn insurance. Your unique index catches \"mike smith\" vs \"Mike Smith\" — it does NOT catch \"Mike\" vs \"Michael\".\n\nThe consequence sits in an iOS section footer, where that kind of explanation belongs, and the safe choice gets the filled button while the new-driver path stays one deliberate tap away."
+    },
+    {
+      "id": "c-return",
+      "page": "page-4",
+      "x": 2588,
+      "y": 2030,
+      "w": 440,
+      "text": "Whole 96px rows are the target, with Reminders-style circles instead of 20px checkboxes. Landscape earns its keep: checklist left, notes right, nothing scrolls.\n\nThe dead disabled button is gone — it now says what's missing (\"2 items left\"), so nobody taps a button that won't respond and won't explain."
+    },
+    {
+      "id": "c-explore",
+      "page": "page-1",
+      "x": 0,
+      "y": -190,
+      "w": 620,
+      "text": "How we got there — kept for the record, nothing live here.\n\nTop row: the three original board directions, plus the dim variant of the chosen one. Bottom row: the flow screens in the pre-iOS vocabulary."
+    },
+    {
+      "id": "a-opt-a",
+      "page": "page-1",
+      "x": 0,
+      "y": 880,
+      "w": 440,
+      "text": "A — Instrument Panel\n\nThe one you picked as closest. Too dark and too edgy: the near-black ground, industrial condensed type and heavy borders were doing that. The iOS pass kept the layout and dropped all three."
+    },
+    {
+      "id": "a-opt-b",
+      "page": "page-1",
+      "x": 1294,
+      "y": 880,
+      "w": 440,
+      "text": "B — Signal Cards\n\nCurrent palette given room, four big cards. Safe, real improvement, nobody would call it new."
+    },
+    {
+      "id": "a-opt-c",
+      "page": "page-1",
+      "x": 2588,
+      "y": 880,
+      "w": 440,
+      "text": "C — Dispatch Board\n\nGrouped by state rather than listed by name. Answers \"what can I take?\" in one column, at the cost of cars moving position as their state changes."
+    },
+    {
+      "id": "a-dim",
+      "page": "page-1",
+      "x": 3882,
+      "y": 880,
+      "w": 440,
+      "text": "A3 — iOS Dim\n\nProper iOS dark, kept in case the glare argument comes back at night. Same layout as the chosen board, so switching later is a palette swap rather than a redesign. Its header still has the old eyebrow treatment."
+    },
+    {
+      "id": "a-preflow",
+      "page": "page-1",
+      "x": 0,
+      "y": 2030,
+      "w": 620,
+      "text": "The flow screens before the iOS pass. Structure is identical to the shipped versions on the first page — only the vocabulary changed."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "page-4" }
+}

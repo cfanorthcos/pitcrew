@@ -25,3 +25,6 @@ dist-ssr
 
 # Claude Code personal overrides (permissions, etc.) — not shared
 .claude/settings.local.json
+
+# Generated design canvas — re-seeded from design/*.dc.html, 2.4MB of editor payload
+design/pitcrew-kiosk-redesign.html

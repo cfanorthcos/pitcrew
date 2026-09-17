@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+    a { color: #e0243f; } a:hover { color: #f04a62; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width: 1194px; height: 834px; background: #12100d; color: #f2efe9; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 92px; flex-shrink: 0; background: #0b0a08; border-bottom: 1px solid #2b2721; display: flex; align-items: center; justify-content: space-between; padding: 0 28px;">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="2" y="3" width="20" height="16" rx="3" stroke="#f2efe9" stroke-width="1.6"></rect>
+        <rect x="2" y="3" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="12" y="3" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="7" y="7" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="17" y="7" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="2" y="11" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="12" y="11" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="7" y="15" width="5" height="4" fill="#f2efe9"></rect>
+        <rect x="17" y="15" width="5" height="4" fill="#f2efe9"></rect>
+      </svg>
+      <span style="font-size: 23px; font-weight: 600; letter-spacing: 0.14em;">PITCREW</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="display: flex; align-items: baseline; gap: 10px;">
+        <span class="mono" style="font-size: 40px; font-weight: 600; color: #e0243f; line-height: 1;">2</span>
+        <span style="font-size: 14px; font-weight: 600; letter-spacing: 0.1em; color: #8f887b;">OUT</span>
+      </div>
+      <div style="width: 1px; height: 32px; background: #2b2721;"></div>
+      <div style="display: flex; align-items: baseline; gap: 10px;">
+        <span class="mono" style="font-size: 40px; font-weight: 600; color: #3fa76a; line-height: 1;">1</span>
+        <span style="font-size: 14px; font-weight: 600; letter-spacing: 0.1em; color: #8f887b;">FREE</span>
+      </div>
+      <div style="width: 1px; height: 32px; background: #2b2721;"></div>
+      <span class="mono" style="font-size: 26px; color: #8f887b;">2:14 PM</span>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; padding: 24px 28px;">
+
+    <div style="background: #1c1915; border: 1px solid #2b2721; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column;">
+      <div style="height: 8px; background: #c8102e; flex-shrink: 0;"></div>
+      <div style="padding: 22px; display: flex; flex-direction: column; flex-grow: 1;">
+        <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.02em;">Red Car</div>
+        <div style="font-size: 15px; font-weight: 600; letter-spacing: 0.1em; color: #3d8fd4; margin-top: 10px;">IN USE</div>
+        <div style="flex-grow: 1;"></div>
+        <div style="font-size: 21px; color: #f2efe9; font-weight: 500;">Marcus T.</div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 6px;">
+          <span class="mono" style="font-size: 27px; font-weight: 600; color: #f2efe9;">1h 22m</span>
+          <span style="font-size: 15px; color: #8f887b;">on shift</span>
+        </div>
+      </div>
+      <div style="padding: 16px 22px; border-top: 1px solid #2b2721; font-size: 17px; font-weight: 600; color: #8f887b;">Tap to return</div>
+    </div>
+
+    <div style="background: #1c1915; border: 1px solid #3fa76a; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column;">
+      <div style="height: 8px; background: #1f6fb2; flex-shrink: 0;"></div>
+      <div style="padding: 22px; display: flex; flex-direction: column; flex-grow: 1;">
+        <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.02em;">Blue Car</div>
+        <div style="font-size: 15px; font-weight: 600; letter-spacing: 0.1em; color: #3fa76a; margin-top: 10px;">AVAILABLE</div>
+        <div style="flex-grow: 1;"></div>
+        <svg width="46" height="46" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="#3fa76a" stroke-width="1.6"></circle>
+          <path d="M8.5 12.2l2.4 2.4 4.6-4.9" stroke="#3fa76a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </div>
+      <div style="padding: 16px 22px; background: #3fa76a; font-size: 17px; font-weight: 600; color: #0b0a08;">Tap to take</div>
+    </div>
+
+    <div style="background: #1c1915; border: 1px solid #d9971f; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column;">
+      <div style="height: 8px; background: #1c1c1c; flex-shrink: 0;"></div>
+      <div style="padding: 22px; display: flex; flex-direction: column; flex-grow: 1;">
+        <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.02em;">Black Car</div>
+        <div style="display: flex; align-items: center; gap: 7px; margin-top: 10px;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 8v5M12 16.5v.2" stroke="#d9971f" stroke-width="2" stroke-linecap="round"></path>
+            <path d="M10.3 3.9L2.7 17.4c-.7 1.2.2 2.6 1.6 2.6h15.4c1.4 0 2.3-1.4 1.6-2.6L13.7 3.9c-.7-1.2-2.6-1.2-3.4 0z" stroke="#d9971f" stroke-width="1.6"></path>
+          </svg>
+          <span style="font-size: 15px; font-weight: 600; letter-spacing: 0.1em; color: #d9971f;">OVERDUE</span>
+        </div>
+        <div style="flex-grow: 1;"></div>
+        <div style="font-size: 21px; color: #f2efe9; font-weight: 500;">Dani R.</div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 6px;">
+          <span class="mono" style="font-size: 27px; font-weight: 600; color: #d9971f;">14h 07m</span>
+        </div>
+        <div style="font-size: 15px; color: #8f887b; margin-top: 2px;">without signing out</div>
+      </div>
+      <div style="padding: 16px 22px; border-top: 1px solid #2b2721; font-size: 17px; font-weight: 600; color: #8f887b;">Tap to return</div>
+    </div>
+
+    <div style="background: #161310; border: 1px solid #221f1a; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; opacity: 0.55;">
+      <div style="height: 8px; background: #4a463f; flex-shrink: 0;"></div>
+      <div style="padding: 22px; display: flex; flex-direction: column; flex-grow: 1;">
+        <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.02em; color: #8f887b;">White Car</div>
+        <div style="font-size: 15px; font-weight: 600; letter-spacing: 0.1em; color: #7d766a; margin-top: 10px;">OUT OF SERVICE</div>
+        <div style="flex-grow: 1;"></div>
+      </div>
+      <div style="padding: 16px 22px; border-top: 1px solid #221f1a; font-size: 17px; font-weight: 600; color: #5d574e;">Unavailable</div>
+    </div>
+  </div>
+
+  <div style="height: 112px; flex-shrink: 0; background: #0b0a08; border-top: 1px solid #2b2721; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));">
+    <div style="display: flex; align-items: center; justify-content: center; gap: 12px; border-bottom: 4px solid #e0243f; color: #f2efe9;">
+      <span style="font-size: 23px; font-weight: 600;">Vehicles</span>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: center; gap: 12px; color: #8f887b;">
+      <span style="font-size: 23px; font-weight: 600;">Hot Bags</span>
+      <span class="mono" style="min-width: 32px; height: 32px; border-radius: 16px; background: #d9971f; color: #0b0a08; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center; padding: 0 10px;">2</span>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: center; gap: 12px; color: #8f887b;">
+      <span style="font-size: 23px; font-weight: 600;">Slow Tasks</span>
+      <span class="mono" style="min-width: 32px; height: 32px; border-radius: 16px; background: #d9971f; color: #0b0a08; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center; padding: 0 10px;">1</span>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
