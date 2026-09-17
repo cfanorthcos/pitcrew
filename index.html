@@ -51,6 +51,18 @@
         <button type="button" class="k-navbtn hidden" id="nav-cancel">Cancel</button>
 
         <span class="k-clock" id="nav-clock" data-clock>—</span>
+
+        <!-- The only route to admin. In standalone PWA mode there is no address
+             bar, so without this the dashboard cannot be reached from the wall
+             iPad at all. Quiet, but deliberately not a secret gesture. -->
+        <a class="k-adminlink" id="nav-admin" href="admin.html" aria-label="Admin dashboard">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 7.5h10M18 7.5h2M4 16.5h2M10 16.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            <circle cx="16" cy="7.5" r="2.3" stroke="currentColor" stroke-width="1.8" />
+            <circle cx="8" cy="16.5" r="2.3" stroke="currentColor" stroke-width="1.8" />
+          </svg>
+          <span>Admin</span>
+        </a>
       </div>
 
       <div class="k-titlerow">

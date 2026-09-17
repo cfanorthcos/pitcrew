@@ -784,3 +784,21 @@ input[type='color'] {
   color: var(--tint);
   font-weight: 600;
 }
+
+/* Sized as a real target, not a footnote — on a wall-mounted iPad running the
+   kiosk as a standalone PWA there is no address bar and no back button, so this
+   is the only way off the PIN screen for a driver who tapped Admin by mistake. */
+.lock-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  margin-top: 2px;
+  color: var(--label-2);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+
+.lock-back:hover {
+  color: var(--label);
+}

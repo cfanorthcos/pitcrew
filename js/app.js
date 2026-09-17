@@ -94,6 +94,7 @@ function setChrome(view) {
   const isFlow = view.chrome === 'flow';
   $('nav-brand').classList.toggle('hidden', isFlow);
   $('nav-clock').classList.toggle('hidden', isFlow);
+  $('nav-admin').classList.toggle('hidden', isFlow);
   $('nav-back').classList.toggle('hidden', !isFlow);
   $('nav-context').classList.toggle('hidden', !isFlow);
   $('tab-bar').classList.toggle('hidden', isFlow);

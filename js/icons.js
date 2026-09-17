@@ -35,6 +35,14 @@ const CHEVRON_BODY = `<path d="M9.5 5.5L16 12l-6.5 6.5" stroke="currentColor" st
 
 const PLUS_BODY = `<path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>`;
 
+// Sliders rather than a cog: the admin screens are settings and records, and a
+// cog reads as "device settings" on an iPad, which is the one place a driver
+// should never end up.
+const SLIDERS_BODY = `
+  <path d="M4 7.5h10M18 7.5h2M4 16.5h2M10 16.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <circle cx="16" cy="7.5" r="2.3" stroke="currentColor" stroke-width="1.8"/>
+  <circle cx="8" cy="16.5" r="2.3" stroke="currentColor" stroke-width="1.8"/>`;
+
 export const icon = {
   car: (size = 32, color) => svg(size, CAR_BODY, color),
   bag: (size = 32, color) => svg(size, BAG_BODY, color),
@@ -43,4 +51,5 @@ export const icon = {
   check: (size = 24, color) => svg(size, CHECK_BODY, color),
   chevron: (size = 22, color) => svg(size, CHEVRON_BODY, color),
   plus: (size = 26, color) => svg(size, PLUS_BODY, color),
+  sliders: (size = 22, color) => svg(size, SLIDERS_BODY, color),
 };

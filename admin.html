@@ -33,6 +33,10 @@
       <input type="password" inputmode="numeric" id="lock-pin-input" placeholder="PIN" autocomplete="off" />
       <button type="button" class="btn btn-primary" id="lock-submit-btn">Unlock</button>
       <p class="lock-error hidden" id="lock-error">Incorrect PIN. Try again.</p>
+      <!-- Essential, not decoration: the kiosk runs as a standalone PWA with no
+           address bar and no back button, so a driver who taps Admin by mistake
+           has no other way out of this screen. -->
+      <a class="lock-back" href="index.html">&lsaquo; Back to kiosk</a>
     </div>
   </div>
 

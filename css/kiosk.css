@@ -208,6 +208,28 @@ button {
   padding: 0 4px;
 }
 
+/* Admin entry point. Muted on purpose — a driver should be able to find it if
+   asked to, and never feel invited into it. The PIN screen behind it is the
+   actual gate, and it has its own way back. */
+.k-adminlink {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 48px;
+  padding: 0 10px;
+  margin-right: -10px;
+  border-radius: var(--r-sm);
+  color: var(--label-3);
+  text-decoration: none;
+  font-size: var(--fs-foot);
+  font-weight: 500;
+}
+
+.k-adminlink:hover {
+  color: var(--label-2);
+  background: var(--fill);
+}
+
 .k-navctx {
   display: flex;
   align-items: center;
