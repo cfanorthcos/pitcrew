@@ -101,11 +101,29 @@ export function createDataApi(supabase) {
   // ---------------------------------------------------------------------------
   // admin: driver incidents (customer complaints) CRUD
   // ---------------------------------------------------------------------------
-  async function fetchDriverIncidents() {
+  // The history view, capped like every other history read. Counting open
+  // incidents must NOT derive from this — see fetchOpenDriverIncidents.
+  async function fetchDriverIncidents(limit = HISTORY_PAGE_SIZE) {
     const { data, error } = await supabase
       .from('driver_incidents')
       .select('*, drivers(name)')
-      .order('reported_at', { ascending: false });
+      .order('reported_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data;
+  }
+
+  // The dashboard tile and the per-driver counts on the Drivers table used to
+  // filter the capped history fetch above, so an open incident older than the
+  // newest HISTORY_PAGE_SIZE rows silently stopped being counted — the number
+  // drifted low as history grew, on the one screen that exists to surface it.
+  // Read the open rows directly instead: resolved rows are what accumulate
+  // forever, open ones get closed, so this set stays small without a cap.
+  async function fetchOpenDriverIncidents() {
+    const { data, error } = await supabase
+      .from('driver_incidents')
+      .select('id, driver_id')
+      .eq('status', 'open');
     if (error) throw error;
     return data;
   }
@@ -328,6 +346,17 @@ export function createDataApi(supabase) {
     });
   }
 
+  // Counterpart to fetchOpenDriverIncidents, for the dashboard tile and the
+  // per-bag Open Issues column. Same trap, same fix.
+  async function fetchOpenHotBagIssues() {
+    const { data, error } = await supabase
+      .from('hot_bag_maintenance')
+      .select('id, bag_id')
+      .eq('status', 'open');
+    if (error) throw error;
+    return data;
+  }
+
   async function fetchHotBagMaintenanceHistory(limit = HISTORY_PAGE_SIZE) {
     const { data, error } = await supabase
       .from('hot_bag_maintenance')
@@ -395,12 +424,13 @@ export function createDataApi(supabase) {
     await updateRowOrThrow('slow_tasks', taskId, { last_completed: new Date().toISOString() });
   }
 
-  async function fetchSlowTaskCompletions(taskId) {
+  async function fetchSlowTaskCompletions(taskId, limit = HISTORY_PAGE_SIZE) {
     const { data, error } = await supabase
       .from('slow_task_completions')
       .select('*, drivers(name)')
       .eq('task_id', taskId)
-      .order('completed_at', { ascending: false });
+      .order('completed_at', { ascending: false })
+      .limit(limit);
     if (error) throw error;
     return data;
   }
@@ -449,12 +479,13 @@ export function createDataApi(supabase) {
     return data;
   }
 
-  async function fetchVehicleHistory(vehicleId) {
+  async function fetchVehicleHistory(vehicleId, limit = HISTORY_PAGE_SIZE) {
     const { data, error } = await supabase
       .from('driving_sessions')
       .select('*, drivers(name)')
       .eq('vehicle_id', vehicleId)
-      .order('start_time', { ascending: false });
+      .order('start_time', { ascending: false })
+      .limit(limit);
     if (error) throw error;
     return data;
   }
@@ -467,6 +498,7 @@ export function createDataApi(supabase) {
     updateDriver,
     setDriverActive,
     fetchDriverIncidents,
+    fetchOpenDriverIncidents,
     createDriverIncident,
     updateDriverIncident,
     setDriverIncidentStatus,
@@ -486,6 +518,7 @@ export function createDataApi(supabase) {
     reportHotBagIssue,
     setHotBagIssueStatus,
     fetchHotBagMaintenanceHistory,
+    fetchOpenHotBagIssues,
     fetchAllHotBags,
     createHotBag,
     updateHotBag,

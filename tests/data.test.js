@@ -359,3 +359,84 @@ test('fetchHotBagMaintenanceHistory accepts a caller-supplied bound', async () =
 
   assert.equal(calls[0].modifiers.find((m) => m.type === 'limit').count, 25);
 });
+
+// ---------------------------------------------------------------------------
+// bounded history, part two — and the counts that must NOT be derived from it
+//
+// Three history reads were still unbounded (incidents, vehicle detail, task
+// completions), so they grew forever. Capping them exposed a second, quieter
+// bug: the dashboard tiles and the per-row "open" columns counted by filtering
+// those capped lists, so an open row older than the cap stopped being counted
+// at all. Counting now reads the open rows directly.
+// ---------------------------------------------------------------------------
+test('fetchDriverIncidents is bounded and newest-first', async () => {
+  const { api, calls } = setup(byTable({ driver_incidents: { data: [] } }));
+
+  await api.fetchDriverIncidents();
+
+  const limit = calls[0].modifiers.find((m) => m.type === 'limit');
+  const order = calls[0].modifiers.find((m) => m.type === 'order');
+  assert.equal(limit.count, 500);
+  assert.equal(order.column, 'reported_at');
+  assert.equal(order.options.ascending, false);
+});
+
+test('fetchVehicleHistory is bounded', async () => {
+  const { api, calls } = setup(byTable({ driving_sessions: { data: [] } }));
+
+  await api.fetchVehicleHistory('veh-1');
+
+  assert.equal(calls[0].modifiers.find((m) => m.type === 'limit').count, 500);
+  assert.equal(findFilter(calls[0], 'vehicle_id').value, 'veh-1');
+});
+
+test('fetchSlowTaskCompletions is bounded', async () => {
+  const { api, calls } = setup(byTable({ slow_task_completions: { data: [] } }));
+
+  await api.fetchSlowTaskCompletions('task-1');
+
+  assert.equal(calls[0].modifiers.find((m) => m.type === 'limit').count, 500);
+  assert.equal(findFilter(calls[0], 'task_id').value, 'task-1');
+});
+
+test('fetchOpenDriverIncidents filters on status rather than capping', async () => {
+  // The count must stay correct when history outgrows HISTORY_PAGE_SIZE, so
+  // this read is filtered, not truncated.
+  const { api, calls } = setup(byTable({ driver_incidents: { data: [] } }));
+
+  await api.fetchOpenDriverIncidents();
+
+  assert.equal(findFilter(calls[0], 'status').value, 'open');
+  assert.equal(
+    calls[0].modifiers.find((m) => m.type === 'limit'),
+    undefined,
+    'a bound here would undercount open incidents',
+  );
+});
+
+test('fetchOpenHotBagIssues filters on status rather than capping', async () => {
+  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: [] } }));
+
+  await api.fetchOpenHotBagIssues();
+
+  assert.equal(findFilter(calls[0], 'status').value, 'open');
+  assert.equal(
+    calls[0].modifiers.find((m) => m.type === 'limit'),
+    undefined,
+    'a bound here would undercount open issues',
+  );
+});
+
+test('the open-row reads select only what the counts need', async () => {
+  // These run on the dashboard's first paint; there is no reason to pull the
+  // full row (including free-text complaint details) just to count it.
+  const { api, calls } = setup(
+    byTable({ driver_incidents: { data: [] }, hot_bag_maintenance: { data: [] } }),
+  );
+
+  await api.fetchOpenDriverIncidents();
+  await api.fetchOpenHotBagIssues();
+
+  assert.equal(calls[0].columns, 'id, driver_id');
+  assert.equal(calls[1].columns, 'id, bag_id');
+});
