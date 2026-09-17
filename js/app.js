@@ -47,6 +47,7 @@ import {
 } from './kiosk-render.js';
 import { icon } from './icons.js';
 import { searchDrivers, orderByRecent, findExactDriver, findConfusableDriver } from './match.js';
+import { createVersionWatcher } from './version-watch.js';
 
 const BOARD_REFRESH_MS = 20000;
 
@@ -55,6 +56,10 @@ const BOARD_REFRESH_MS = 20000;
 // first — somebody checks a hot bag, walks away, and the wall shows a bag list
 // until the next person thinks to tap back. Everything returns to the board.
 const IDLE_RETURN_MS = 45000;
+
+// Poll for a deploy. Five minutes is far more often than this app ships, and a
+// HEAD request every five minutes is nothing next to the board's own 20s refresh.
+const VERSION_CHECK_MS = 300000;
 
 const RECENT_LIMIT = 8;
 const ISSUE_OPTIONS = ['Broken zipper', 'Damaged insulation', 'Dirty', 'Torn', 'Other'];
@@ -809,8 +814,10 @@ function startBoardAutoRefresh() {
 }
 
 let idleTimer = null;
+let lastInteraction = Date.now();
 
 function resetIdleTimer() {
+  lastInteraction = Date.now();
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     if (state.view === 'vehicles' && !isModalOpen()) return;
@@ -823,6 +830,18 @@ function resetIdleTimer() {
   document.addEventListener(type, resetIdleTimer, { passive: true });
 });
 
+// Nobody reloads a wall-mounted screen, so it reloads itself when a deploy
+// lands — but only sitting idle on the board, never mid-checkout or mid-return.
+const versionWatcher = createVersionWatcher({
+  url: 'index.html',
+  fetchImpl: (...args) => fetch(...args),
+  reload: () => window.location.reload(),
+  isSafeToReload: () =>
+    state.view === 'vehicles' &&
+    !isModalOpen() &&
+    Date.now() - lastInteraction > IDLE_RETURN_MS,
+});
+
 // ---------------------------------------------------------------------------
 // init
 // ---------------------------------------------------------------------------
@@ -832,3 +851,5 @@ switchView('vehicles');
 refreshTabCounts();
 startBoardAutoRefresh();
 resetIdleTimer();
+versionWatcher.check();
+setInterval(() => versionWatcher.check(), VERSION_CHECK_MS);
