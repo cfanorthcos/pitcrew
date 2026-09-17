@@ -7,6 +7,7 @@ import {
   updateDriver,
   setDriverActive,
   fetchDriverIncidents,
+  fetchOpenDriverIncidents,
   createDriverIncident,
   updateDriverIncident,
   setDriverIncidentStatus,
@@ -16,6 +17,7 @@ import {
   updateHotBag,
   setHotBagActive,
   fetchHotBagMaintenanceHistory,
+  fetchOpenHotBagIssues,
   setHotBagIssueStatus,
   fetchSlowTasks,
   fetchAllSlowTasks,
@@ -50,6 +52,22 @@ import {
   startTicker,
   refreshTickers,
 } from './ui.js';
+import {
+  badge,
+  sectionHint,
+  sectionWarning,
+  sectionToolbar,
+  actionButton,
+  backLink,
+  dataTable,
+  rowActions,
+  field,
+  textInput,
+  numberInput,
+  textArea,
+  select,
+  modalActions,
+} from './render.js';
 
 // ---------------------------------------------------------------------------
 // dashboard
@@ -67,23 +85,25 @@ async function renderDashboard() {
   const container = document.getElementById('section-dashboard');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    // driver_incidents is fetched best-effort so the dashboard still renders on
-    // a project whose schema migration hasn't been applied yet.
-    const [vehicles, openSessions, hotBags, maintenance, slowTasks, incidents] = await Promise.all([
+    // Both open-row reads rather than the capped history reads: these tiles are
+    // counts, and counting a truncated list undercounts once history outgrows
+    // HISTORY_PAGE_SIZE. driver_incidents stays best-effort so the dashboard
+    // still renders on a project whose schema migration hasn't been applied.
+    const [vehicles, openSessions, hotBags, openBagIssues, slowTasks, openIncidents_] = await Promise.all([
       fetchVehiclesWithAvailability(),
       fetchOpenSessions(),
       fetchHotBags(),
-      fetchHotBagMaintenanceHistory(),
+      fetchOpenHotBagIssues(),
       fetchSlowTasks(),
-      fetchDriverIncidents().catch(() => []),
+      fetchOpenDriverIncidents().catch(() => []),
     ]);
 
     const out = vehicles.filter((v) => v.activeSession).length;
     const free = vehicles.filter((v) => !v.activeSession && v.status !== 'out_of_service').length;
     const needsCleaning = hotBags.filter(isNeedsCleaning).length;
     const dueTasks = slowTasks.filter(isTaskDue).length;
-    const openIssues = maintenance.filter((m) => m.status === 'open').length;
-    const openIncidents = incidents.filter((i) => i.status === 'open').length;
+    const openIssues = openBagIssues.length;
+    const openIncidents = openIncidents_.length;
 
     const overdueSessions = openSessions.filter((s) => isShiftOverdue(s.start_time));
     const shiftRows = openSessions
@@ -97,16 +117,12 @@ async function renderDashboard() {
             <td><span class="elapsed ${
               overdue ? 'is-overdue' : ''
             }" data-since="${escapeHtml(s.start_time)}">—</span></td>
+            <td>${overdue ? badge('Overdue', 'warn') : badge('On shift', 'neutral')}</td>
             <td>${
               overdue
-                ? '<span class="badge badge-warn">Overdue</span>'
-                : '<span class="badge badge-neutral">On shift</span>'
-            }</td>
-            <td>${
-              overdue
-                ? `<button type="button" class="btn btn-secondary btn-sm force-close-btn" data-session-id="${escapeHtml(
-                    s.id,
-                  )}">Force Close</button>`
+                ? rowActions([
+                    { label: 'Force Close', className: 'force-close-btn', data: { 'data-session-id': s.id } },
+                  ])
                 : ''
             }</td>
           </tr>
@@ -124,20 +140,17 @@ async function renderDashboard() {
         ${statCard(openIncidents, 'Open Driver Incidents', 'incidents', openIncidents ? 'is-bad' : '')}
       </div>
 
-      <div class="section-toolbar">
-        <h2 class="section-title">On Shift Right Now</h2>
-        ${
-          overdueSessions.length
-            ? `<p class="section-hint">${overdueSessions.length} past ${SHIFT_OVERDUE_HOURS}h without signing out.</p>`
-            : ''
-        }
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Driver</th><th>Vehicle</th><th>Started</th><th>Elapsed</th><th>State</th><th></th></tr></thead>
-          <tbody>${shiftRows || '<tr><td colspan="6">Nobody is out right now.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar(
+        'On Shift Right Now',
+        overdueSessions.length
+          ? sectionHint(`${overdueSessions.length} past ${SHIFT_OVERDUE_HOURS}h without signing out.`)
+          : '',
+      )}
+      ${dataTable({
+        columns: ['Driver', 'Vehicle', 'Started', 'Elapsed', 'State', ''],
+        rows: shiftRows,
+        empty: 'Nobody is out right now.',
+      })}
     `;
 
     container.querySelectorAll('[data-goto]').forEach((el) => {
@@ -179,12 +192,8 @@ function openForceCloseModal(session) {
         closed by you, right now, with the checklist marked incomplete — not as a
         normal return.
       </p>
-      <div>
-        <label class="field-label" for="force-close-note">Note saved to history</label>
-        <textarea id="force-close-note">${escapeHtml(defaultNote)}</textarea>
-      </div>
-      <button type="button" class="btn btn-primary" id="force-close-confirm">Force Close Shift</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field('Note saved to history', 'force-close-note', textArea({ id: 'force-close-note', value: defaultNote }))}
+      ${modalActions('Force Close Shift', 'force-close-confirm')}
     `,
   );
 
@@ -209,11 +218,11 @@ function openForceCloseModal(session) {
 // ---------------------------------------------------------------------------
 // vehicles
 // ---------------------------------------------------------------------------
-function vehicleStatusDisplay(vehicle) {
-  if (vehicle.activeSession) return { label: 'In Use', badge: 'badge-neutral' };
-  if (vehicle.status === 'available') return { label: 'Available', badge: 'badge-good' };
-  if (vehicle.status === 'needs_attention') return { label: 'Needs Attention', badge: 'badge-warn' };
-  return { label: 'Out of Service', badge: 'badge-bad' };
+function vehicleStatusBadge(vehicle) {
+  if (vehicle.activeSession) return badge('In Use', 'neutral');
+  if (vehicle.status === 'available') return badge('Available', 'good');
+  if (vehicle.status === 'needs_attention') return badge('Needs Attention', 'warn');
+  return badge('Out of Service', 'bad');
 }
 
 async function renderVehicles() {
@@ -223,12 +232,11 @@ async function renderVehicles() {
     const vehicles = await fetchVehiclesWithAvailability();
     const rows = vehicles
       .map((v) => {
-        const status = vehicleStatusDisplay(v);
         return `
           <tr class="clickable" data-vehicle-id="${escapeHtml(v.id)}">
             <td><strong>${escapeHtml(v.name)}</strong></td>
             <td>${escapeHtml(v.color_name)}</td>
-            <td><span class="badge ${status.badge}">${status.label}</span></td>
+            <td>${vehicleStatusBadge(v)}</td>
             <td>${v.activeSession ? escapeHtml(v.activeSession.drivers?.name ?? '—') : '—'}</td>
             <td>${v.activeSession ? formatDateTime(v.activeSession.start_time) : '—'}</td>
             <td>${
@@ -242,18 +250,12 @@ async function renderVehicles() {
       .join('');
 
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Vehicles</h2>
-        <p class="section-hint">Tap a row for its full driving history.</p>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr><th>Vehicle</th><th>Color</th><th>Status</th><th>Current Driver</th><th>Shift Started</th><th>Elapsed</th></tr>
-          </thead>
-          <tbody>${rows || '<tr><td colspan="6">No vehicles configured.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar('Vehicles', sectionHint('Tap a row for its full driving history.'))}
+      ${dataTable({
+        columns: ['Vehicle', 'Color', 'Status', 'Current Driver', 'Shift Started', 'Elapsed'],
+        rows,
+        empty: 'No vehicles configured.',
+      })}
     `;
 
     container.querySelectorAll('tr[data-vehicle-id]').forEach((row) => {
@@ -289,16 +291,18 @@ async function showVehicleDetail(vehicle) {
       .join('');
 
     container.innerHTML = `
-      <button type="button" class="back-link" id="vehicle-detail-back">‹ Back to vehicles</button>
+      ${backLink('‹ Back to vehicles', 'vehicle-detail-back')}
       <h2 class="section-title">${escapeHtml(vehicle.name)} — Driving History</h2>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr><th>Driver</th><th>Start</th><th>End</th><th>Checklist</th><th>Notes</th></tr>
-          </thead>
-          <tbody>${rows || '<tr><td colspan="5">No driving history yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${
+        history.length >= HISTORY_PAGE_SIZE
+          ? sectionHint(`Showing the ${HISTORY_PAGE_SIZE} most recent shifts.`)
+          : ''
+      }
+      ${dataTable({
+        columns: ['Driver', 'Start', 'End', 'Checklist', 'Notes'],
+        rows,
+        empty: 'No driving history yet.',
+      })}
     `;
     container.querySelector('#vehicle-detail-back').addEventListener('click', () => switchSection('vehicles'));
   } catch {
@@ -316,20 +320,21 @@ function openDriverModal(driver = null) {
     isEdit ? `Edit ${driver.name}` : 'Add a driver',
     `
       <h2>${isEdit ? 'Edit Driver' : 'Add Driver'}</h2>
-      <div>
-        <label class="field-label" for="driver-name-input">Name</label>
-        <input type="text" id="driver-name-input" placeholder="Full name" value="${escapeHtml(driver?.name ?? '')}" />
-      </div>
-      <div>
-        <label class="field-label" for="driver-employee-input">Employee Number</label>
-        <input type="text" id="driver-employee-input" placeholder="Optional" value="${escapeHtml(
-          driver?.employee_number ?? '',
-        )}" />
-      </div>
-      <button type="button" class="btn btn-primary" id="driver-save-btn">${
-        isEdit ? 'Save Changes' : 'Add Driver'
-      }</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field(
+        'Name',
+        'driver-name-input',
+        textInput({ id: 'driver-name-input', placeholder: 'Full name', value: driver?.name ?? '' }),
+      )}
+      ${field(
+        'Employee Number',
+        'driver-employee-input',
+        textInput({
+          id: 'driver-employee-input',
+          placeholder: 'Optional',
+          value: driver?.employee_number ?? '',
+        }),
+      )}
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Driver', 'driver-save-btn')}
     `,
   );
 
@@ -362,15 +367,14 @@ async function renderDrivers() {
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
     const drivers = await fetchAllDrivers();
-    // Best-effort: the Drivers tab still works even if driver_incidents isn't
-    // there yet (e.g. schema migration not applied) — it just shows 0 open
-    // incidents everywhere instead of failing the whole section.
-    const incidents = await fetchDriverIncidents().catch(() => []);
+    // Open rows only — a count derived from the capped history read goes stale
+    // low. Best-effort: the Drivers tab still works even if driver_incidents
+    // isn't there yet (e.g. schema migration not applied) — it just shows 0
+    // open incidents everywhere instead of failing the whole section.
+    const openIncidents = await fetchOpenDriverIncidents().catch(() => []);
 
     const openByDriver = new Map();
-    incidents
-      .filter((i) => i.status === 'open')
-      .forEach((i) => openByDriver.set(i.driver_id, (openByDriver.get(i.driver_id) || 0) + 1));
+    openIncidents.forEach((i) => openByDriver.set(i.driver_id, (openByDriver.get(i.driver_id) || 0) + 1));
 
     const rows = drivers
       .map((d) => {
@@ -379,36 +383,28 @@ async function renderDrivers() {
           <tr class="${d.active ? '' : 'is-inactive'}">
             <td><strong>${escapeHtml(d.name)}</strong></td>
             <td>${escapeHtml(d.employee_number ?? '—')}</td>
-            <td><span class="badge ${d.active ? 'badge-good' : 'badge-muted'}">${
-              d.active ? 'Active' : 'Inactive'
-            }</span></td>
-            <td>${openCount > 0 ? `<span class="badge badge-warn">${openCount}</span>` : '0'}</td>
-            <td>
-              <div class="row-actions">
-                <button type="button" class="btn btn-secondary btn-sm edit-driver-btn" data-driver-id="${escapeHtml(
-                  d.id,
-                )}">Edit</button>
-                <button type="button" class="btn btn-secondary btn-sm toggle-driver-btn" data-driver-id="${escapeHtml(
-                  d.id,
-                )}">${d.active ? 'Deactivate' : 'Reactivate'}</button>
-              </div>
-            </td>
+            <td>${d.active ? badge('Active', 'good') : badge('Inactive', 'muted')}</td>
+            <td>${openCount > 0 ? badge(openCount, 'warn') : '0'}</td>
+            <td>${rowActions([
+              { label: 'Edit', className: 'edit-driver-btn', data: { 'data-driver-id': d.id } },
+              {
+                label: d.active ? 'Deactivate' : 'Reactivate',
+                className: 'toggle-driver-btn',
+                data: { 'data-driver-id': d.id },
+              },
+            ])}</td>
           </tr>
         `;
       })
       .join('');
 
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Drivers</h2>
-        <button type="button" class="btn btn-primary btn-auto" id="add-driver-btn">+ Add Driver</button>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Name</th><th>Employee #</th><th>Status</th><th>Open Incidents</th><th>Actions</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="5">No drivers yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar('Drivers', actionButton('+ Add Driver', 'add-driver-btn'))}
+      ${dataTable({
+        columns: ['Name', 'Employee #', 'Status', 'Open Incidents', 'Actions'],
+        rows,
+        empty: 'No drivers yet.',
+      })}
     `;
 
     container.querySelector('#add-driver-btn').addEventListener('click', () => openDriverModal());
@@ -454,11 +450,7 @@ async function renderDriverHistory() {
             <td>${escapeHtml(s.vehicles?.name ?? '—')}</td>
             <td>${formatDateTime(s.start_time)}</td>
             <td>${formatDateTime(s.end_time)}</td>
-            <td>${
-              s.end_time
-                ? `<span class="badge badge-good">Closed</span>`
-                : `<span class="badge badge-neutral">Open</span>`
-            }</td>
+            <td>${s.end_time ? badge('Closed', 'good') : badge('Open', 'neutral')}</td>
             <td>${s.checklist_completed ? 'Yes' : 'No'}</td>
             <td>${escapeHtml(s.return_notes ?? '—')}</td>
           </tr>
@@ -468,22 +460,15 @@ async function renderDriverHistory() {
 
     const truncated = sessions.length >= HISTORY_PAGE_SIZE;
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Driver History</h2>
-        ${
-          truncated
-            ? `<p class="section-hint">Showing the ${HISTORY_PAGE_SIZE} most recent shifts.</p>`
-            : ''
-        }
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr><th>Driver</th><th>Vehicle</th><th>Start</th><th>End</th><th>Shift</th><th>Checklist</th><th>Notes</th></tr>
-          </thead>
-          <tbody>${rows || '<tr><td colspan="7">No driving history yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar(
+        'Driver History',
+        truncated ? sectionHint(`Showing the ${HISTORY_PAGE_SIZE} most recent shifts.`) : '',
+      )}
+      ${dataTable({
+        columns: ['Driver', 'Vehicle', 'Start', 'End', 'Shift', 'Checklist', 'Notes'],
+        rows,
+        empty: 'No driving history yet.',
+      })}
     `;
   } catch {
     showError('Could not load driver history.');
@@ -501,16 +486,16 @@ function openChecklistItemModal(item = null, nextSortOrder = 1) {
     `
       <h2>${isEdit ? 'Edit Checklist Item' : 'Add Checklist Item'}</h2>
       <p class="meta">Drivers must tick every active item before they can sign out.</p>
-      <div>
-        <label class="field-label" for="checklist-label-input">Label</label>
-        <input type="text" id="checklist-label-input" placeholder="e.g. Remove trash from vehicle" value="${escapeHtml(
-          item?.label ?? '',
-        )}" />
-      </div>
-      <button type="button" class="btn btn-primary" id="checklist-save-btn">${
-        isEdit ? 'Save Changes' : 'Add Item'
-      }</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field(
+        'Label',
+        'checklist-label-input',
+        textInput({
+          id: 'checklist-label-input',
+          placeholder: 'e.g. Remove trash from vehicle',
+          value: item?.label ?? '',
+        }),
+      )}
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Item', 'checklist-save-btn')}
     `,
   );
 
@@ -553,54 +538,50 @@ async function renderChecklistItems() {
           <tr class="${item.active ? '' : 'is-inactive'}">
             <td>${item.active ? activeIndex + 1 : '—'}</td>
             <td class="cell-wrap"><strong>${escapeHtml(item.label)}</strong></td>
-            <td><span class="badge ${item.active ? 'badge-good' : 'badge-muted'}">${
-              item.active ? 'Active' : 'Retired'
-            }</span></td>
-            <td>
-              <div class="row-actions">
-                ${
-                  item.active
-                    ? `<button type="button" class="btn btn-secondary btn-sm move-item-btn" data-item-id="${escapeHtml(
-                        item.id,
-                      )}" data-dir="-1" ${atTop ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
-                       <button type="button" class="btn btn-secondary btn-sm move-item-btn" data-item-id="${escapeHtml(
-                         item.id,
-                       )}" data-dir="1" ${atBottom ? 'disabled' : ''} aria-label="Move down">&darr;</button>`
-                    : ''
-                }
-                <button type="button" class="btn btn-secondary btn-sm edit-item-btn" data-item-id="${escapeHtml(
-                  item.id,
-                )}">Edit</button>
-                <button type="button" class="btn btn-secondary btn-sm toggle-item-btn" data-item-id="${escapeHtml(
-                  item.id,
-                )}">${item.active ? 'Retire' : 'Restore'}</button>
-              </div>
-            </td>
+            <td>${item.active ? badge('Active', 'good') : badge('Retired', 'muted')}</td>
+            <td>${rowActions([
+              item.active && {
+                label: '↑',
+                className: 'move-item-btn',
+                data: { 'data-item-id': item.id, 'data-dir': '-1' },
+                disabled: atTop,
+                ariaLabel: 'Move up',
+              },
+              item.active && {
+                label: '↓',
+                className: 'move-item-btn',
+                data: { 'data-item-id': item.id, 'data-dir': '1' },
+                disabled: atBottom,
+                ariaLabel: 'Move down',
+              },
+              { label: 'Edit', className: 'edit-item-btn', data: { 'data-item-id': item.id } },
+              {
+                label: item.active ? 'Retire' : 'Restore',
+                className: 'toggle-item-btn',
+                data: { 'data-item-id': item.id },
+              },
+            ])}</td>
           </tr>
         `;
       })
       .join('');
 
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Return Checklist</h2>
-        <button type="button" class="btn btn-primary btn-auto" id="add-checklist-btn">+ Add Item</button>
-      </div>
-      <p class="section-hint">
-        Drivers tick every active item, in this order, before they can sign out.
-        Retiring an item hides it from new returns but keeps old returns readable.
-      </p>
+      ${sectionToolbar('Return Checklist', actionButton('+ Add Item', 'add-checklist-btn'))}
+      ${sectionHint(
+        'Drivers tick every active item, in this order, before they can sign out. ' +
+          'Retiring an item hides it from new returns but keeps old returns readable.',
+      )}
       ${
         active.length === 0
-          ? '<p class="section-warning">No active items — drivers will sign out without a checklist.</p>'
+          ? sectionWarning('No active items — drivers will sign out without a checklist.')
           : ''
       }
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>#</th><th>Item</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="4">No checklist items yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${dataTable({
+        columns: ['#', 'Item', 'Status', 'Actions'],
+        rows,
+        empty: 'No checklist items yet.',
+      })}
     `;
 
     const nextSortOrder = items.length + 1;
@@ -666,42 +647,47 @@ function openDriverIncidentModal(incident = null, drivers = []) {
     isEdit ? 'Edit incident' : 'Add an incident',
     `
       <h2>${isEdit ? 'Edit Incident' : 'Add Incident'}</h2>
-      <div>
-        <label class="field-label" for="incident-driver-select">Driver</label>
-        <select id="incident-driver-select">
-          <option value="">Select…</option>
-          ${drivers
-            .map(
-              (d) =>
-                `<option value="${escapeHtml(d.id)}" ${
-                  incident?.driver_id === d.id ? 'selected' : ''
-                }>${escapeHtml(d.name)}</option>`,
-            )
-            .join('')}
-        </select>
-      </div>
-      <div>
-        <label class="field-label" for="incident-customer-input">Customer Name</label>
-        <input type="text" id="incident-customer-input" placeholder="Optional" value="${escapeHtml(
-          incident?.customer_name ?? '',
-        )}" />
-      </div>
-      <div>
-        <label class="field-label" for="incident-description-input">What happened</label>
-        <textarea id="incident-description-input" placeholder="Complaint details">${escapeHtml(
-          incident?.description ?? '',
-        )}</textarea>
-      </div>
-      <div>
-        <label class="field-label" for="incident-resolution-input">Resolution Notes</label>
-        <textarea id="incident-resolution-input" placeholder="Optional">${escapeHtml(
-          incident?.resolution_notes ?? '',
-        )}</textarea>
-      </div>
-      <button type="button" class="btn btn-primary" id="incident-save-btn">${
-        isEdit ? 'Save Changes' : 'Add Incident'
-      }</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field(
+        'Driver',
+        'incident-driver-select',
+        select({
+          id: 'incident-driver-select',
+          placeholder: 'Select…',
+          options: drivers.map((d) => ({
+            value: d.id,
+            label: d.name,
+            selected: incident?.driver_id === d.id,
+          })),
+        }),
+      )}
+      ${field(
+        'Customer Name',
+        'incident-customer-input',
+        textInput({
+          id: 'incident-customer-input',
+          placeholder: 'Optional',
+          value: incident?.customer_name ?? '',
+        }),
+      )}
+      ${field(
+        'What happened',
+        'incident-description-input',
+        textArea({
+          id: 'incident-description-input',
+          placeholder: 'Complaint details',
+          value: incident?.description ?? '',
+        }),
+      )}
+      ${field(
+        'Resolution Notes',
+        'incident-resolution-input',
+        textArea({
+          id: 'incident-resolution-input',
+          placeholder: 'Optional',
+          value: incident?.resolution_notes ?? '',
+        }),
+      )}
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Incident', 'incident-save-btn')}
     `,
   );
 
@@ -756,36 +742,35 @@ async function renderDriverIncidents() {
             <td><strong>${escapeHtml(i.drivers?.name ?? '—')}</strong></td>
             <td>${escapeHtml(i.customer_name ?? '—')}</td>
             <td class="cell-wrap">${escapeHtml(i.description)}</td>
-            <td><span class="badge ${i.status === 'open' ? 'badge-warn' : 'badge-good'}">${escapeHtml(
-              i.status,
-            )}</span></td>
+            <td>${badge(i.status, i.status === 'open' ? 'warn' : 'good')}</td>
             <td>${formatDateTime(i.reported_at)}</td>
-            <td>
-              <div class="row-actions">
-                <button type="button" class="btn btn-secondary btn-sm edit-incident-btn" data-incident-id="${escapeHtml(
-                  i.id,
-                )}">Edit</button>
-                <button type="button" class="btn btn-secondary btn-sm toggle-incident-btn" data-incident-id="${escapeHtml(
-                  i.id,
-                )}">${i.status === 'open' ? 'Resolve' : 'Reopen'}</button>
-              </div>
-            </td>
+            <td>${rowActions([
+              { label: 'Edit', className: 'edit-incident-btn', data: { 'data-incident-id': i.id } },
+              {
+                label: i.status === 'open' ? 'Resolve' : 'Reopen',
+                className: 'toggle-incident-btn',
+                data: { 'data-incident-id': i.id },
+              },
+            ])}</td>
           </tr>
         `,
       )
       .join('');
 
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Driver Incidents</h2>
-        <button type="button" class="btn btn-primary btn-auto" id="add-incident-btn">+ Add Incident</button>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Driver</th><th>Customer</th><th>Description</th><th>Status</th><th>Reported</th><th>Actions</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="6">No incidents reported yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar('Driver Incidents', actionButton('+ Add Incident', 'add-incident-btn'))}
+      ${
+        incidents.length >= HISTORY_PAGE_SIZE
+          ? sectionHint(
+              `Showing the ${HISTORY_PAGE_SIZE} most recent incidents. Open ones are always counted in full.`,
+            )
+          : ''
+      }
+      ${dataTable({
+        columns: ['Driver', 'Customer', 'Description', 'Status', 'Reported', 'Actions'],
+        rows,
+        empty: 'No incidents reported yet.',
+      })}
     `;
 
     container
@@ -829,22 +814,21 @@ function openHotBagModal(bag = null) {
     isEdit ? `Edit ${bag.name}` : 'Add a hot bag',
     `
       <h2>${isEdit ? 'Edit Hot Bag' : 'Add Hot Bag'}</h2>
-      <div>
-        <label class="field-label" for="hotbag-name-input">Name</label>
-        <input type="text" id="hotbag-name-input" placeholder="e.g. Hot Bag 05" value="${escapeHtml(
-          bag?.name ?? '',
-        )}" />
-      </div>
-      <div>
-        <label class="field-label" for="hotbag-window-input">Needs cleaning after (days)</label>
-        <input type="number" min="1" id="hotbag-window-input" value="${escapeHtml(
-          String(bag?.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS),
-        )}" />
-      </div>
-      <button type="button" class="btn btn-primary" id="hotbag-save-btn">${
-        isEdit ? 'Save Changes' : 'Add Hot Bag'
-      }</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field(
+        'Name',
+        'hotbag-name-input',
+        textInput({ id: 'hotbag-name-input', placeholder: 'e.g. Hot Bag 05', value: bag?.name ?? '' }),
+      )}
+      ${field(
+        'Needs cleaning after (days)',
+        'hotbag-window-input',
+        numberInput({
+          id: 'hotbag-window-input',
+          min: 1,
+          value: bag?.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS,
+        }),
+      )}
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Hot Bag', 'hotbag-save-btn')}
     `,
   );
 
@@ -880,36 +864,39 @@ async function renderHotBagsAdmin() {
   const container = document.getElementById('section-hotbags');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const [bags, maintenance] = await Promise.all([fetchAllHotBags(), fetchHotBagMaintenanceHistory()]);
+    // Two reads on purpose: the table below shows recent history (capped), while
+    // the per-bag Open Issues column must count every open row, including ones
+    // older than the cap.
+    const [bags, maintenance, openBagIssues] = await Promise.all([
+      fetchAllHotBags(),
+      fetchHotBagMaintenanceHistory(),
+      fetchOpenHotBagIssues(),
+    ]);
 
     const openIssuesByBag = new Map();
-    maintenance
-      .filter((m) => m.status === 'open')
-      .forEach((m) => openIssuesByBag.set(m.bag_id, (openIssuesByBag.get(m.bag_id) || 0) + 1));
+    openBagIssues.forEach((m) => openIssuesByBag.set(m.bag_id, (openIssuesByBag.get(m.bag_id) || 0) + 1));
 
     const bagRows = bags
       .map((bag) => {
         const needsCleaning = isNeedsCleaning(bag);
         const openCount = openIssuesByBag.get(bag.id) || 0;
-        const badge = !bag.active ? 'badge-muted' : needsCleaning ? 'badge-warn' : 'badge-good';
+        const tone = !bag.active ? 'muted' : needsCleaning ? 'warn' : 'good';
         const label = !bag.active ? 'Inactive' : needsCleaning ? 'Needs Cleaning' : 'Current';
         return `
           <tr class="${bag.active ? '' : 'is-inactive'}">
             <td><strong>${escapeHtml(bag.name)}</strong></td>
             <td>${formatDate(bag.last_cleaned, 'Never')}</td>
             <td>${escapeHtml(String(bag.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS))} days</td>
-            <td><span class="badge ${badge}">${label}</span></td>
+            <td>${badge(label, tone)}</td>
             <td>${openCount}</td>
-            <td>
-              <div class="row-actions">
-                <button type="button" class="btn btn-secondary btn-sm edit-bag-btn" data-bag-id="${escapeHtml(
-                  bag.id,
-                )}">Edit</button>
-                <button type="button" class="btn btn-secondary btn-sm toggle-bag-btn" data-bag-id="${escapeHtml(
-                  bag.id,
-                )}">${bag.active ? 'Deactivate' : 'Reactivate'}</button>
-              </div>
-            </td>
+            <td>${rowActions([
+              { label: 'Edit', className: 'edit-bag-btn', data: { 'data-bag-id': bag.id } },
+              {
+                label: bag.active ? 'Deactivate' : 'Reactivate',
+                className: 'toggle-bag-btn',
+                data: { 'data-bag-id': bag.id },
+              },
+            ])}</td>
           </tr>
         `;
       })
@@ -922,40 +909,33 @@ async function renderHotBagsAdmin() {
             <td><strong>${escapeHtml(m.hot_bags?.name ?? '—')}</strong></td>
             <td>${escapeHtml(m.issue)}</td>
             <td class="cell-wrap">${escapeHtml(m.notes ?? '—')}</td>
-            <td><span class="badge ${m.status === 'open' ? 'badge-warn' : 'badge-good'}">${escapeHtml(
-              m.status,
-            )}</span></td>
+            <td>${badge(m.status, m.status === 'open' ? 'warn' : 'good')}</td>
             <td>${formatDateTime(m.submitted_at)}</td>
-            <td>
-              <div class="row-actions">
-                <button type="button" class="btn btn-secondary btn-sm toggle-maintenance-btn" data-maintenance-id="${escapeHtml(
-                  m.id,
-                )}">${m.status === 'open' ? 'Resolve' : 'Reopen'}</button>
-              </div>
-            </td>
+            <td>${rowActions([
+              {
+                label: m.status === 'open' ? 'Resolve' : 'Reopen',
+                className: 'toggle-maintenance-btn',
+                data: { 'data-maintenance-id': m.id },
+              },
+            ])}</td>
           </tr>
         `,
       )
       .join('');
 
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Hot Bags</h2>
-        <button type="button" class="btn btn-primary btn-auto" id="add-hotbag-btn">+ Add Hot Bag</button>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Bag</th><th>Last Cleaned</th><th>Clean Window</th><th>Status</th><th>Open Issues</th><th>Actions</th></tr></thead>
-          <tbody>${bagRows || '<tr><td colspan="6">No hot bags configured.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar('Hot Bags', actionButton('+ Add Hot Bag', 'add-hotbag-btn'))}
+      ${dataTable({
+        columns: ['Bag', 'Last Cleaned', 'Clean Window', 'Status', 'Open Issues', 'Actions'],
+        rows: bagRows,
+        empty: 'No hot bags configured.',
+      })}
       <h2 class="section-title">Maintenance History</h2>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Bag</th><th>Issue</th><th>Notes</th><th>Status</th><th>Submitted</th><th>Actions</th></tr></thead>
-          <tbody>${maintenanceRows || '<tr><td colspan="6">No maintenance reports yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${dataTable({
+        columns: ['Bag', 'Issue', 'Notes', 'Status', 'Submitted', 'Actions'],
+        rows: maintenanceRows,
+        empty: 'No maintenance reports yet.',
+      })}
     `;
 
     container.querySelector('#add-hotbag-btn').addEventListener('click', () => openHotBagModal());
@@ -1006,26 +986,22 @@ function openSlowTaskModal(task = null) {
     isEdit ? `Edit ${task.name}` : 'Add a slow task',
     `
       <h2>${isEdit ? 'Edit Slow Task' : 'Add Slow Task'}</h2>
-      <div>
-        <label class="field-label" for="task-name-input">Name</label>
-        <input type="text" id="task-name-input" placeholder="Task name" value="${escapeHtml(task?.name ?? '')}" />
-      </div>
-      <div>
-        <label class="field-label" for="task-description-input">Description</label>
-        <textarea id="task-description-input" placeholder="Optional">${escapeHtml(
-          task?.description ?? '',
-        )}</textarea>
-      </div>
-      <div>
-        <label class="field-label" for="task-frequency-input">Recurs every (days)</label>
-        <input type="number" min="1" id="task-frequency-input" value="${escapeHtml(
-          String(task?.frequency_days ?? ''),
-        )}" />
-      </div>
-      <button type="button" class="btn btn-primary" id="task-save-btn">${
-        isEdit ? 'Save Changes' : 'Add Task'
-      }</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field(
+        'Name',
+        'task-name-input',
+        textInput({ id: 'task-name-input', placeholder: 'Task name', value: task?.name ?? '' }),
+      )}
+      ${field(
+        'Description',
+        'task-description-input',
+        textArea({ id: 'task-description-input', placeholder: 'Optional', value: task?.description ?? '' }),
+      )}
+      ${field(
+        'Recurs every (days)',
+        'task-frequency-input',
+        numberInput({ id: 'task-frequency-input', min: 1, value: task?.frequency_days ?? '' }),
+      )}
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Task', 'task-save-btn')}
     `,
   );
 
@@ -1066,7 +1042,7 @@ async function renderSlowTasksAdmin() {
     const rows = tasks
       .map((t) => {
         const due = t.active && isTaskDue(t);
-        const badge = !t.active ? 'badge-muted' : due ? 'badge-warn' : 'badge-good';
+        const tone = !t.active ? 'muted' : due ? 'warn' : 'good';
         const label = !t.active ? 'Inactive' : due ? 'Due' : 'On Track';
         return `
           <tr class="clickable ${t.active ? '' : 'is-inactive'}" data-task-id="${escapeHtml(t.id)}">
@@ -1074,35 +1050,27 @@ async function renderSlowTasksAdmin() {
             <td>${frequencyLabel(t.frequency_days)}</td>
             <td>${formatDate(t.last_completed, 'Never')}</td>
             <td>${formatDate(t.next_due)}</td>
-            <td><span class="badge ${badge}">${label}</span></td>
-            <td>
-              <div class="row-actions">
-                <button type="button" class="btn btn-secondary btn-sm edit-task-btn" data-task-id="${escapeHtml(
-                  t.id,
-                )}">Edit</button>
-                <button type="button" class="btn btn-secondary btn-sm toggle-task-btn" data-task-id="${escapeHtml(
-                  t.id,
-                )}">${t.active ? 'Deactivate' : 'Reactivate'}</button>
-              </div>
-            </td>
+            <td>${badge(label, tone)}</td>
+            <td>${rowActions([
+              { label: 'Edit', className: 'edit-task-btn', data: { 'data-task-id': t.id } },
+              {
+                label: t.active ? 'Deactivate' : 'Reactivate',
+                className: 'toggle-task-btn',
+                data: { 'data-task-id': t.id },
+              },
+            ])}</td>
           </tr>
         `;
       })
       .join('');
 
     container.innerHTML = `
-      <div class="section-toolbar">
-        <h2 class="section-title">Slow Tasks</h2>
-        <button type="button" class="btn btn-primary btn-auto" id="add-task-btn">+ Add Slow Task</button>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr><th>Task</th><th>Frequency</th><th>Last Completed</th><th>Next Due</th><th>Status</th><th>Actions</th></tr>
-          </thead>
-          <tbody>${rows || '<tr><td colspan="6">No slow tasks configured.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${sectionToolbar('Slow Tasks', actionButton('+ Add Slow Task', 'add-task-btn'))}
+      ${dataTable({
+        columns: ['Task', 'Frequency', 'Last Completed', 'Next Due', 'Status', 'Actions'],
+        rows,
+        empty: 'No slow tasks configured.',
+      })}
     `;
 
     container.querySelector('#add-task-btn').addEventListener('click', () => openSlowTaskModal());
@@ -1160,14 +1128,18 @@ async function showSlowTaskDetail(task) {
       .join('');
 
     container.innerHTML = `
-      <button type="button" class="back-link" id="slowtask-detail-back">‹ Back to slow tasks</button>
+      ${backLink('‹ Back to slow tasks', 'slowtask-detail-back')}
       <h2 class="section-title">${escapeHtml(task.name)} — Completion History</h2>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Completed</th><th>By</th><th>Notes</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="3">No completions recorded yet.</td></tr>'}</tbody>
-        </table>
-      </div>
+      ${
+        completions.length >= HISTORY_PAGE_SIZE
+          ? sectionHint(`Showing the ${HISTORY_PAGE_SIZE} most recent completions.`)
+          : ''
+      }
+      ${dataTable({
+        columns: ['Completed', 'By', 'Notes'],
+        rows,
+        empty: 'No completions recorded yet.',
+      })}
     `;
     container
       .querySelector('#slowtask-detail-back')

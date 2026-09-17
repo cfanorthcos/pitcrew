@@ -30,6 +30,7 @@ import {
   startTicker,
   refreshTickers,
 } from './ui.js';
+import { badge, field, textInput, textArea, select, modalActions } from './render.js';
 
 const ISSUE_OPTIONS = ['Broken zipper', 'Damaged insulation', 'Dirty', 'Torn', 'Other'];
 const BOARD_REFRESH_MS = 20000;
@@ -203,20 +204,28 @@ async function openAssignModal(vehicle) {
     `
       <h2>Check Out ${escapeHtml(vehicle.name)}</h2>
       <p class="meta">Who's driving?</p>
-      <div>
-        <label class="field-label" for="assign-driver-select">Select your name</label>
-        <select id="assign-driver-select">
-          <option value="">Select…</option>
-          ${drivers.map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join('')}
-          <option value="__other__">Not listed — type my name</option>
-        </select>
-      </div>
+      ${field(
+        'Select your name',
+        'assign-driver-select',
+        select({
+          id: 'assign-driver-select',
+          placeholder: 'Select…',
+          // The self-add escape hatch is the last option on purpose — see the
+          // redesign for why that ordering is the first thing to change.
+          options: [
+            ...drivers.map((d) => ({ value: d.id, label: d.name })),
+            { value: '__other__', label: 'Not listed — type my name' },
+          ],
+        }),
+      )}
       <div id="assign-other-wrap" class="hidden">
-        <label class="field-label" for="assign-other-name">Your name</label>
-        <input type="text" id="assign-other-name" placeholder="Full name" autocomplete="name" />
+        ${field(
+          'Your name',
+          'assign-other-name',
+          textInput({ id: 'assign-other-name', placeholder: 'Full name', autocomplete: 'name' }),
+        )}
       </div>
-      <button type="button" class="btn btn-primary" id="assign-confirm-btn" disabled>Start Shift</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${modalActions('Start Shift', 'assign-confirm-btn', { disabled: true })}
     `,
   );
 
@@ -378,9 +387,7 @@ function buildHotBagCard(bag) {
   card.innerHTML = `
     <div class="title-row">
       <h3>${escapeHtml(bag.name)}</h3>
-      <span class="badge ${needsCleaning ? 'badge-warn' : 'badge-good'}">${
-        needsCleaning ? 'Needs Cleaning' : 'Current'
-      }</span>
+      ${needsCleaning ? badge('Needs Cleaning', 'warn') : badge('Current', 'good')}
     </div>
     <div class="meta">Cleaned ${formatRelativeDays(bag.last_cleaned)} · ${formatDate(
       bag.last_cleaned,
@@ -426,12 +433,8 @@ function openIssueModal(bag) {
             `<button type="button" class="option-btn" data-issue="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`,
         ).join('')}
       </div>
-      <div>
-        <label class="field-label" for="issue-notes">Notes</label>
-        <textarea id="issue-notes" placeholder="Optional"></textarea>
-      </div>
-      <button type="button" class="btn btn-primary" id="issue-submit-btn" disabled>Submit</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field('Notes', 'issue-notes', textArea({ id: 'issue-notes', placeholder: 'Optional' }))}
+      ${modalActions('Submit', 'issue-submit-btn', { disabled: true })}
     `,
   );
 
@@ -489,7 +492,7 @@ function buildSlowTaskCard(task) {
   card.innerHTML = `
     <div class="title-row">
       <h3>${escapeHtml(task.name)}</h3>
-      <span class="badge badge-warn">Due</span>
+      ${badge('Due', 'warn')}
     </div>
     ${task.description ? `<div class="meta">${escapeHtml(task.description)}</div>` : ''}
     <div class="meta">${frequencyLabel(task.frequency_days)} · last done ${formatRelativeDays(
@@ -520,19 +523,21 @@ async function openTaskCompleteModal(task) {
     `
       <h2>Complete Task</h2>
       <p class="meta">${escapeHtml(task.name)}</p>
-      <div>
-        <label class="field-label" for="task-driver-select">Who completed it?</label>
-        <select id="task-driver-select">
-          <option value="">Not specified</option>
-          ${drivers.map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div>
-        <label class="field-label" for="task-complete-notes">Notes</label>
-        <textarea id="task-complete-notes" placeholder="Optional"></textarea>
-      </div>
-      <button type="button" class="btn btn-primary" id="task-complete-btn">Mark Complete</button>
-      <button type="button" class="btn btn-ghost" data-modal-close>Cancel</button>
+      ${field(
+        'Who completed it?',
+        'task-driver-select',
+        select({
+          id: 'task-driver-select',
+          placeholder: 'Not specified',
+          options: drivers.map((d) => ({ value: d.id, label: d.name })),
+        }),
+      )}
+      ${field(
+        'Notes',
+        'task-complete-notes',
+        textArea({ id: 'task-complete-notes', placeholder: 'Optional' }),
+      )}
+      ${modalActions('Mark Complete', 'task-complete-btn')}
     `,
   );
 
