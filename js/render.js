@@ -139,6 +139,13 @@ export function numberInput({ id, value = '', min = null, placeholder = null }) 
   return `<input${attrs({ type: 'number', id, min, placeholder, value: String(value ?? '') })} />`;
 }
 
+// A native date picker, which on an iPad is the OS wheel rather than a text
+// field somebody types a format into. `value` must already be YYYY-MM-DD —
+// anything else renders blank, so callers convert from their timestamp first.
+export function dateInput({ id, value = '', min = null }) {
+  return `<input${attrs({ type: 'date', id, min, value: String(value ?? '') })} />`;
+}
+
 // A native colour well. The value must be a 6-digit hex — type="color" silently
 // falls back to #000000 for shorthand (#fff), named colours or junk, so the
 // caller normalises before rendering rather than watching a vehicle quietly

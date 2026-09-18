@@ -22,6 +22,8 @@ export const SHIFT_OVERDUE_HOURS = 12;
 // publishable key above. The actual access boundary is Supabase RLS
 // (sql/schema.sql); anyone with the publishable key can already call the
 // same insert/update operations directly. This just keeps someone
-// wandering by the kiosk from poking at admin/edit screens. Change it here
-// before deploying; there's no admin UI for changing it.
+// wandering by the kiosk from poking at admin/edit screens. It is asked for
+// every time admin.html loads — nothing remembers an unlock, because the one
+// device that matters is a wall iPad whose browser session outlives everybody's
+// shift. Change it here before deploying; there's no admin UI for changing it.
 export const ADMIN_PIN = '3560';

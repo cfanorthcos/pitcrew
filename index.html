@@ -75,6 +75,13 @@
       <!-- VEHICLES ------------------------------------------------------- -->
       <section class="k-panel active" id="panel-vehicles">
         <div class="tile-grid" id="vehicle-board"></div>
+        <!-- Reporting a problem gets its own row rather than a button on each
+             tile: the whole tile is one tap target (a wall kiosk gets tapped
+             with the side of a thumb) and an out-of-service tile isn't tappable
+             at all — which is exactly the car somebody needs to report. -->
+        <div class="board-foot">
+          <button type="button" class="btn btn-plain" id="report-vehicle-btn">Report an issue with a vehicle</button>
+        </div>
       </section>
 
       <!-- HOT BAGS ------------------------------------------------------- -->

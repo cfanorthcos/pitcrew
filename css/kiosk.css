@@ -437,6 +437,13 @@ button {
   color: var(--orange-ink);
 }
 
+/* Sits under the vehicle grid, which is flex:1 — so this stays pinned to the
+   bottom of the board however many vehicles are on it. */
+.board-foot {
+  flex: 0 0 auto;
+  margin-top: 16px;
+}
+
 /* --------------------------------------------------------------------------
    status pills
    -------------------------------------------------------------------------- */

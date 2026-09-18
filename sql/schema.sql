@@ -36,6 +36,23 @@ create table public.vehicles (
   created_at timestamptz not null default now()
 );
 
+-- Issues drivers report against a vehicle from the kiosk. Deliberately separate
+-- from vehicles.status: status is the operator's decision about whether the car
+-- is drivable, this is the raw report that leads to that decision. Same shape as
+-- hot_bag_maintenance so both logs resolve and read identically.
+create table public.vehicle_maintenance (
+  id uuid primary key default gen_random_uuid(),
+  vehicle_id uuid not null references public.vehicles (id) on delete restrict,
+  issue text not null,
+  notes text,
+  status text not null default 'open' check (status in ('open', 'resolved')),
+  submitted_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+create index vehicle_maintenance_vehicle_id_idx on public.vehicle_maintenance (vehicle_id);
+create index vehicle_maintenance_submitted_at_idx on public.vehicle_maintenance (submitted_at desc);
+
 -- ---------------------------------------------------------------------------
 -- driving_sessions (no mileage tracking, ever)
 -- ---------------------------------------------------------------------------
@@ -135,18 +152,32 @@ create index driver_incidents_driver_id_idx on public.driver_incidents (driver_i
 create index driver_incidents_reported_at_idx on public.driver_incidents (reported_at desc);
 
 -- ---------------------------------------------------------------------------
--- slow_tasks: recurring, not-every-shift operational tasks
--- frequency_days: how often the task should recur, in days
+-- slow_tasks: not-every-shift operational tasks, repeating or one-off
+--
+-- repeats        whether the task comes back after it is completed. A repeating
+--                task rolls forward by frequency_days; a one-off is finished for
+--                good once last_completed is set, and drops off both boards
+--                without anyone having to deactivate it by hand.
+-- frequency_days how often a repeating task recurs, in days. Null for one-offs,
+--                which have a due date instead of a cadence.
+-- priority       which task to spend the spare ten minutes on when several are
+--                due at once. Ordering inside a due list, never a due date.
 -- ---------------------------------------------------------------------------
 create table public.slow_tasks (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text,
-  frequency_days integer not null,
+  repeats boolean not null default true,
+  frequency_days integer,
+  priority text not null default 'normal' check (priority in ('low', 'normal', 'high')),
   last_completed timestamptz,
   next_due timestamptz not null default now(),
   active boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- A repeating task without a cadence has nothing to roll forward to, so the
+  -- trigger below would leave next_due frozen and the task permanently due.
+  constraint slow_tasks_repeats_needs_frequency
+    check (not repeats or (frequency_days is not null and frequency_days >= 1))
 );
 
 create table public.slow_task_completions (
@@ -159,14 +190,16 @@ create table public.slow_task_completions (
 
 create index slow_task_completions_task_id_idx on public.slow_task_completions (task_id);
 
--- Whenever last_completed changes, recompute next_due automatically so
--- drivers/admins never type a due date.
+-- Whenever last_completed changes on a repeating task, recompute next_due
+-- automatically so drivers/admins never type a due date. One-off tasks are the
+-- exception: their next_due IS the date somebody chose, so completing one must
+-- leave it alone — the task is finished, not rescheduled.
 create function public.slow_tasks_set_next_due()
 returns trigger
 language plpgsql
 as $$
 begin
-  if new.last_completed is not null then
+  if new.repeats and new.last_completed is not null then
     new.next_due := new.last_completed + make_interval(days => new.frequency_days);
   end if;
   return new;
@@ -190,6 +223,7 @@ create trigger slow_tasks_before_write
 -- ---------------------------------------------------------------------------
 alter table public.drivers enable row level security;
 alter table public.vehicles enable row level security;
+alter table public.vehicle_maintenance enable row level security;
 alter table public.driving_sessions enable row level security;
 alter table public.checklist_items enable row level security;
 alter table public.driving_session_checklist_items enable row level security;
@@ -215,6 +249,15 @@ create policy drivers_update on public.drivers for update using (true) with chec
 create policy vehicles_select on public.vehicles for select using (true);
 create policy vehicles_insert on public.vehicles for insert with check (true);
 create policy vehicles_update on public.vehicles for update using (true) with check (true);
+
+-- vehicle_maintenance: the kiosk files issues from the board, admin resolves
+-- them on the Vehicles screen. Update is what makes Resolve/Reopen work — the
+-- same pair hot_bag_maintenance and driver_incidents already have. Never
+-- delete: the maintenance log is history.
+create policy vehicle_maintenance_select on public.vehicle_maintenance for select using (true);
+create policy vehicle_maintenance_insert on public.vehicle_maintenance for insert with check (true);
+create policy vehicle_maintenance_update on public.vehicle_maintenance
+  for update using (true) with check (true);
 create policy checklist_items_select on public.checklist_items for select using (true);
 -- The return checklist is edited from admin (label, order, active). No delete:
 -- historical driving_session_checklist_items rows must keep resolving to a real
@@ -293,6 +336,10 @@ insert into public.hot_bags (name, last_cleaned) values
   ('Hot Bag 03', now() - interval '1 days'),
   ('Hot Bag 04', now() - interval '9 days');
 
-insert into public.slow_tasks (name, description, frequency_days, last_completed) values
-  ('Deep clean delivery bags', 'Full wipe-down and sanitize of all hot bags, inside and out.', 30, now() - interval '25 days'),
-  ('Inspect vehicle equipment', 'Check phone mounts, chargers, and delivery equipment in every vehicle.', 14, now() - interval '10 days');
+insert into public.slow_tasks (name, description, frequency_days, priority, last_completed) values
+  ('Deep clean delivery bags', 'Full wipe-down and sanitize of all hot bags, inside and out.', 30, 'high', now() - interval '25 days'),
+  ('Inspect vehicle equipment', 'Check phone mounts, chargers, and delivery equipment in every vehicle.', 14, 'normal', now() - interval '10 days');
+
+-- A one-off, to show the shape: no cadence, just a date it needs doing by.
+insert into public.slow_tasks (name, description, repeats, frequency_days, priority, next_due) values
+  ('Swap the winter floor mats', 'One-time changeover across the whole fleet.', false, null, 'low', now() + interval '14 days');

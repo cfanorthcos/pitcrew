@@ -5,8 +5,11 @@ multi-location Chick-fil-A delivery operation. The kiosk is a command-center
 board of every vehicle and its live status. A driver taps an available
 vehicle, identifies themselves (pick from the driver list, or type a name if
 they're not listed), and their shift starts. To sign out, they tap their own
-in-use vehicle and complete the return checklist. The board also has tabs
-for hot bag cleaning and recurring "slow tasks." An admin view (PIN-gated)
+in-use vehicle and complete the return checklist. Anyone can report a problem
+with a car straight from the board, and the report shows on the vehicle's tile
+until an admin resolves it. The board also has tabs for hot bag cleaning and
+"slow tasks" — repeating or one-off jobs, ordered by priority when several come
+due at once. An admin view (PIN-gated, asked every time it's opened)
 gives leadership a live operations dashboard, full history, in-app
 management of drivers, hot bags, and slow tasks, and a log of customer
 complaints against specific drivers.
@@ -217,6 +220,80 @@ not write to. See "Security considerations" below — this is a deliberate
 trade of one more unauthenticated write path for not needing a developer to
 take a car off the road.
 
+### Sixth upgrade: vehicle issue reports, repeatable and prioritised slow tasks
+
+Adds the `vehicle_maintenance` log the kiosk's "Report an issue with a vehicle"
+button writes to, and gives `slow_tasks` a repeat flag, a priority, and the
+ability to hold a one-off with no cadence. Safe to re-run, and independent of
+the other five.
+
+```sql
+-- 1. Vehicle issue reports: the same shape as hot_bag_maintenance.
+create table if not exists public.vehicle_maintenance (
+  id uuid primary key default gen_random_uuid(),
+  vehicle_id uuid not null references public.vehicles (id) on delete restrict,
+  issue text not null,
+  notes text,
+  status text not null default 'open' check (status in ('open', 'resolved')),
+  submitted_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+create index if not exists vehicle_maintenance_vehicle_id_idx
+  on public.vehicle_maintenance (vehicle_id);
+create index if not exists vehicle_maintenance_submitted_at_idx
+  on public.vehicle_maintenance (submitted_at desc);
+
+alter table public.vehicle_maintenance enable row level security;
+
+drop policy if exists vehicle_maintenance_select on public.vehicle_maintenance;
+create policy vehicle_maintenance_select on public.vehicle_maintenance for select using (true);
+
+drop policy if exists vehicle_maintenance_insert on public.vehicle_maintenance;
+create policy vehicle_maintenance_insert on public.vehicle_maintenance for insert with check (true);
+
+drop policy if exists vehicle_maintenance_update on public.vehicle_maintenance;
+create policy vehicle_maintenance_update on public.vehicle_maintenance
+  for update using (true) with check (true);
+
+-- 2. Slow tasks: repeat flag + priority. Every existing task repeats, which is
+--    what the default gives them, so nothing changes for rows already there.
+alter table public.slow_tasks add column if not exists repeats boolean not null default true;
+alter table public.slow_tasks
+  add column if not exists priority text not null default 'normal';
+alter table public.slow_tasks drop constraint if exists slow_tasks_priority_check;
+alter table public.slow_tasks
+  add constraint slow_tasks_priority_check check (priority in ('low', 'normal', 'high'));
+
+-- 3. A one-off has no cadence, so frequency_days stops being mandatory — but a
+--    repeating task without one would leave next_due frozen and the task
+--    permanently due, so guard that instead.
+alter table public.slow_tasks alter column frequency_days drop not null;
+alter table public.slow_tasks drop constraint if exists slow_tasks_repeats_needs_frequency;
+alter table public.slow_tasks
+  add constraint slow_tasks_repeats_needs_frequency
+  check (not repeats or (frequency_days is not null and frequency_days >= 1));
+
+-- 4. Completing a one-off must not reschedule it. `create or replace` swaps the
+--    function under the existing trigger — no need to touch the trigger itself.
+create or replace function public.slow_tasks_set_next_due()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.repeats and new.last_completed is not null then
+    new.next_due := new.last_completed + make_interval(days => new.frequency_days);
+  end if;
+  return new;
+end;
+$$;
+```
+
+Until step 1 runs, the kiosk board and the admin Vehicles screen both still
+work — the issue reads are best-effort — but the report button fails on submit
+and no open-issue counts appear anywhere. Until steps 2–4 run, adding or editing
+a slow task fails with "That change didn't save — check that the database schema
+is up to date," and every existing task keeps behaving as a repeating one.
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -350,6 +427,26 @@ the vehicle's condition, separate from whether it's currently checked out
 (that's derived automatically from `driving_sessions`). An out-of-service
 vehicle can still have an open session; the driver returns it normally.
 
+### Vehicle issues reported from the kiosk
+
+The kiosk's **Report an issue with a vehicle** button (under the vehicle board)
+writes a row to `vehicle_maintenance`: which car, what kind of problem, and
+optional notes. It's a button on the board rather than one on each tile because
+the whole tile is a single tap target, and because an out-of-service tile isn't
+tappable at all — which is exactly the car somebody most often needs to report.
+Every active vehicle is offered, including ones currently checked out.
+
+An open report shows as a red flag on that vehicle's kiosk tile, as an **Open
+Issues** count on the admin Vehicles table, and as a dashboard tile. Admin →
+**Vehicles** → *Reported Issues* has **Resolve / Reopen** on each row, the same
+shape as hot bag maintenance and driver incidents: it sets `status`, stamps or
+clears `resolved_at`, and never deletes the report.
+
+Reporting deliberately does **not** change `vehicles.status`. A driver reporting
+"needs cleaning" shouldn't take a car off the road, and an admin taking a car off
+the road shouldn't silently close the report that prompted it — **Take off road**
+stays the separate, deliberate action it was.
+
 Equivalent SQL, if you'd rather:
 
 ```sql
@@ -382,20 +479,41 @@ update hot_bags set active = false where name = 'Hot Bag 01'; -- retire
 ## How to add or edit slow tasks
 
 Admin → **Slow Tasks** has full CRUD: "+ Add Slow Task" (name, optional
-description, recurrence in days), **Edit**, and **Deactivate/Reactivate**.
+description, schedule, priority), **Edit**, and **Deactivate/Reactivate**.
+
+**Schedule** is the choice between the two kinds of task:
+
+- **Repeats on a schedule** — the original behaviour. Set a cadence in days;
+  `next_due` is calculated automatically by a database trigger whenever the row
+  is saved with a `last_completed` value, so no one ever types a due date.
+  Editing the cadence on an already-completed task recomputes `next_due`
+  immediately from the existing `last_completed`.
+- **One-time** — set a due date instead of a cadence. Completing it finishes it
+  for good: it disappears from the kiosk on its own and reads **Completed** in
+  admin. Nobody has to remember to deactivate it. It keeps its completion
+  history like any other task.
+
+**Priority** is `low` / `normal` / `high`. It orders the kiosk's "Due now" list
+when several tasks land at once (high first, then whichever has been due
+longest) and shows as a pill on the card — it never changes *when* something
+becomes due. `normal` shows no pill, because a badge on every card is a badge on
+none of them. "Coming up" still reads by date, since that list is a calendar.
 
 Equivalent SQL:
 
 ```sql
-insert into slow_tasks (name, description, frequency_days)
-  values ('Check delivery supplies', 'Restock bags, receipt paper, etc.', 14);
+-- repeating, the default
+insert into slow_tasks (name, description, frequency_days, priority)
+  values ('Check delivery supplies', 'Restock bags, receipt paper, etc.', 14, 'high');
+
+-- one-time: no cadence, a date instead
+insert into slow_tasks (name, repeats, frequency_days, priority, next_due)
+  values ('Swap the winter floor mats', false, null, 'low', now() + interval '14 days');
 ```
 
-`frequency_days` is how often the task recurs. `next_due` is calculated
-automatically by a database trigger whenever the row is saved with a
-`last_completed` value set — no one ever types a due date, and editing
-`frequency_days` on an already-completed task recomputes `next_due`
-immediately from the existing `last_completed`.
+A repeating task must have a `frequency_days` — `slow_tasks_repeats_needs_frequency`
+enforces that, because a repeating task with nothing to roll forward to would sit
+permanently due.
 
 ## Security considerations
 
@@ -412,7 +530,8 @@ exactly the operations each screen needs (see the comments in
 - **Every table the app writes is now reachable by anyone with the
   publishable key**, whether or not they ever open `admin.html`: drivers,
   **vehicles**, hot bags, slow tasks, return-checklist items, sessions,
-  maintenance reports, completions, and driver incidents. Vehicles were the
+  hot bag **and vehicle** maintenance reports, completions, and driver
+  incidents. Vehicles were the
   last read-only table and stopped being one when admin got vehicle CRUD —
   which means the kiosk board's contents are now writable with the same key
   the kiosk ships. Driver
@@ -428,9 +547,13 @@ exactly the operations each screen needs (see the comments in
   hot-bag or slow-task names and no rate limiting anywhere. Accepted for V1
   alongside the other unauthenticated-kiosk risks below — reconsider if it
   gets abused in practice, and see "Adding authentication later" for the
-  real fix.
+  real fix. The PIN is asked **every time** `admin.html` loads — it used to be
+  remembered for the rest of the browser session, which on a wall-mounted iPad
+  (whose session outlives everybody's shift) meant it was asked once and then
+  effectively never again.
 - **Anything a driver types is rendered in the admin's browser.** Because
-  the kiosk can create driver rows and file hot-bag issues with no login,
+  the kiosk can create driver rows and file hot-bag and vehicle issues with
+  no login,
   free-text fields are an untrusted-input path from the public kiosk into
   the admin screens. All interpolation goes through `escapeHtml` in
   `js/ui.js`, which escapes quotes as well as angle brackets — the earlier

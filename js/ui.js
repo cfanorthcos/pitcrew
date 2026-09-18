@@ -3,6 +3,7 @@
 // files, which is how the escaping bug below survived in two places at once.
 
 import { HOT_BAG_CLEAN_WINDOW_DAYS, SHIFT_OVERDUE_HOURS } from './config.js';
+import { SLOW_TASK_PRIORITIES, DEFAULT_SLOW_TASK_PRIORITY } from './data.js';
 
 // ---------------------------------------------------------------------------
 // escaping
@@ -105,8 +106,58 @@ export function isNeedsCleaning(bag) {
   return elapsedMs > windowDays * 24 * 60 * 60 * 1000;
 }
 
+// A one-off task is finished for good the moment it's completed — it has no
+// cadence to roll forward to, so it must stop reading as due, stop counting on
+// the tab badge, and stop appearing on the kiosk. `repeats === false` rather
+// than `!repeats`: a row read from a project that hasn't run the migration has
+// no repeats column at all, and every one of those tasks is a repeating one.
+export function isTaskFinished(task) {
+  return task.repeats === false && Boolean(task.last_completed);
+}
+
 export function isTaskDue(task) {
+  if (isTaskFinished(task)) return false;
   return new Date(task.next_due) <= new Date();
+}
+
+// "Every 2 weeks" for a repeating task, "One-time" for a one-off — the same
+// slot on the card either way, because it answers the same question.
+export function scheduleLabel(task) {
+  return task.repeats === false ? 'One-time' : frequencyLabel(task.frequency_days);
+}
+
+// ---------------------------------------------------------------------------
+// slow task priority
+// ---------------------------------------------------------------------------
+const PRIORITY_BY_VALUE = new Map(SLOW_TASK_PRIORITIES.map((p) => [p.value, p]));
+
+// Unknown or missing values fall back to normal rather than sorting off the end
+// of the list: a task saved before the priority column existed still has to land
+// somewhere sensible among the ones that do.
+function priorityMeta(value) {
+  return PRIORITY_BY_VALUE.get(value) ?? PRIORITY_BY_VALUE.get(DEFAULT_SLOW_TASK_PRIORITY);
+}
+
+export function priorityLabel(value) {
+  return priorityMeta(value).label;
+}
+
+export function priorityRank(value) {
+  return priorityMeta(value).rank;
+}
+
+// Highest priority first, then soonest due. Priority is the tiebreak that
+// matters when several tasks are due at once and there is time for one of them;
+// it deliberately does not change WHEN something is due, only what gets picked
+// off the list first.
+export function compareSlowTasks(a, b) {
+  const byPriority = priorityRank(a.priority) - priorityRank(b.priority);
+  if (byPriority !== 0) return byPriority;
+  return new Date(a.next_due).getTime() - new Date(b.next_due).getTime();
+}
+
+export function sortSlowTasks(tasks) {
+  return [...tasks].sort(compareSlowTasks);
 }
 
 // A shift open past SHIFT_OVERDUE_HOURS almost certainly means the driver went

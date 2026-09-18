@@ -20,6 +20,7 @@ import {
   textInput,
   colorInput,
   numberInput,
+  dateInput,
   textArea,
   select,
   modalActions,
@@ -192,4 +193,12 @@ test('colorInput rejects anything type="color" would silently turn black', () =>
   assert.ok(colorInput({ id: 'c', value: 'rebeccapurple' }).includes('value="#000000"'));
   assert.ok(colorInput({ id: 'c', value: null }).includes('value="#000000"'));
   assert.ok(colorInput({ id: 'c' }).includes('type="color"'));
+});
+
+test('dateInput renders a native date field and drops an empty min', () => {
+  const html = dateInput({ id: 'd', value: '2026-10-01' });
+
+  assert.ok(html.includes('type="date"'));
+  assert.ok(html.includes('value="2026-10-01"'));
+  assert.ok(!html.includes('min='), 'a null min must not emit min="null"');
 });

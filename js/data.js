@@ -27,6 +27,18 @@ export const VEHICLE_STATUSES = [
   { value: 'out_of_service', label: 'Out of Service' },
 ];
 
+// The priority column on slow_tasks, with the labels both screens show and the
+// rank they sort by. Rank rather than alphabetical order: 'high' < 'low' <
+// 'normal' as text, which is exactly backwards, so neither board can order by
+// the raw column and both share this instead.
+export const SLOW_TASK_PRIORITIES = [
+  { value: 'high', label: 'High', rank: 0 },
+  { value: 'normal', label: 'Normal', rank: 1 },
+  { value: 'low', label: 'Low', rank: 2 },
+];
+
+export const DEFAULT_SLOW_TASK_PRIORITY = 'normal';
+
 export function createDataApi(supabase) {
   // A plain `.update().eq('id', id)` with no matching RLS update policy
   // doesn't error — Postgres just matches zero rows and PostgREST reports
@@ -223,6 +235,51 @@ export function createDataApi(supabase) {
 
   async function setVehicleActive(id, active) {
     await updateRowOrThrow('vehicles', id, { active });
+  }
+
+  // ---------------------------------------------------------------------------
+  // vehicle maintenance reports
+  //
+  // Mirrors the hot bag maintenance log exactly: the kiosk files a report, admin
+  // resolves it, nothing is ever deleted. Kept separate from vehicles.status on
+  // purpose — a driver reporting "dirty" should not take a car off the road, and
+  // an admin taking a car off the road should not silently close the report that
+  // prompted it.
+  // ---------------------------------------------------------------------------
+  async function reportVehicleIssue(vehicleId, issue, notes) {
+    const { error } = await supabase
+      .from('vehicle_maintenance')
+      .insert({ vehicle_id: vehicleId, issue, notes: notes || null });
+    if (error) throw error;
+  }
+
+  // Open rows only and deliberately uncapped — same trap as
+  // fetchOpenDriverIncidents: counting from the capped history read drifts low
+  // as resolved reports pile up, on the screens that exist to surface the count.
+  async function fetchOpenVehicleIssues() {
+    const { data, error } = await supabase
+      .from('vehicle_maintenance')
+      .select('id, vehicle_id')
+      .eq('status', 'open');
+    if (error) throw error;
+    return data;
+  }
+
+  async function fetchVehicleMaintenanceHistory(limit = HISTORY_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('vehicle_maintenance')
+      .select('*, vehicles(name)')
+      .order('submitted_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data;
+  }
+
+  async function setVehicleIssueStatus(id, resolved) {
+    await updateRowOrThrow('vehicle_maintenance', id, {
+      status: resolved ? 'resolved' : 'open',
+      resolved_at: resolved ? new Date().toISOString() : null,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -529,18 +586,37 @@ export function createDataApi(supabase) {
     return data;
   }
 
-  async function createSlowTask(name, description, frequencyDays) {
+  // A repeating task carries a cadence and lets the trigger own next_due. A
+  // one-off carries a date instead, and passing frequency_days: null alongside
+  // it matters — leaving a stale cadence on a row whose repeats flag just went
+  // false trips the slow_tasks_repeats_needs_frequency check the moment somebody
+  // switches it back.
+  function slowTaskPayload({ name, description, repeats, frequency_days, priority, next_due }) {
+    const payload = {
+      name,
+      description: description || null,
+      repeats,
+      frequency_days: repeats ? frequency_days : null,
+      priority: priority || DEFAULT_SLOW_TASK_PRIORITY,
+    };
+    // Only a one-off has a date a human chose; a repeating task's next_due is
+    // the trigger's to compute, so never overwrite it from the form.
+    if (!repeats && next_due) payload.next_due = next_due;
+    return payload;
+  }
+
+  async function createSlowTask(task) {
     const { data, error } = await supabase
       .from('slow_tasks')
-      .insert({ name, description: description || null, frequency_days: frequencyDays })
+      .insert(slowTaskPayload(task))
       .select('*')
       .single();
     if (error) throw error;
     return data;
   }
 
-  async function updateSlowTask(id, { name, description, frequency_days }) {
-    await updateRowOrThrow('slow_tasks', id, { name, description: description || null, frequency_days });
+  async function updateSlowTask(id, task) {
+    await updateRowOrThrow('slow_tasks', id, slowTaskPayload(task));
   }
 
   async function setSlowTaskActive(id, active) {
@@ -588,6 +664,10 @@ export function createDataApi(supabase) {
     updateVehicle,
     setVehicleStatus,
     setVehicleActive,
+    reportVehicleIssue,
+    fetchOpenVehicleIssues,
+    fetchVehicleMaintenanceHistory,
+    setVehicleIssueStatus,
     checkoutVehicle,
     forceCloseSession,
     fetchOpenSessions,

@@ -13,6 +13,10 @@ import {
   frequencyLabel,
   isNeedsCleaning,
   isTaskDue,
+  isTaskFinished,
+  scheduleLabel,
+  priorityLabel,
+  sortSlowTasks,
   isShiftOverdue,
 } from '../js/ui.js';
 
@@ -190,4 +194,76 @@ test('inkOn expands shorthand hex and tolerates junk', () => {
 
 test('inkOn ignores an alpha channel rather than misreading it as colour', () => {
   assert.equal(inkOn('#e8e6e100'), '#1c1a16');
+});
+
+// ---------------------------------------------------------------------------
+// repeating vs one-time slow tasks
+// ---------------------------------------------------------------------------
+test('a completed one-time task is finished and stops reading as due', () => {
+  const task = { repeats: false, last_completed: ago(DAY), next_due: ago(10 * DAY) };
+
+  assert.equal(isTaskFinished(task), true);
+  assert.equal(isTaskDue(task), false, 'a one-off has no cadence to come back on');
+});
+
+test('an uncompleted one-time task is due once its date passes', () => {
+  assert.equal(isTaskDue({ repeats: false, last_completed: null, next_due: ago(DAY) }), true);
+  assert.equal(isTaskFinished({ repeats: false, last_completed: null, next_due: ago(DAY) }), false);
+});
+
+test('a repeating task is never finished, however many times it has been done', () => {
+  const task = { repeats: true, frequency_days: 30, last_completed: ago(DAY), next_due: ago(DAY) };
+
+  assert.equal(isTaskFinished(task), false);
+  assert.equal(isTaskDue(task), true);
+});
+
+test('a row from before the migration has no repeats column and stays repeating', () => {
+  // `!task.repeats` would read undefined as "one-off" and silently retire every
+  // existing task the first time it was completed.
+  const legacy = { frequency_days: 7, last_completed: ago(DAY), next_due: ago(DAY) };
+
+  assert.equal(isTaskFinished(legacy), false);
+  assert.equal(isTaskDue(legacy), true);
+});
+
+test('scheduleLabel answers the cadence question for both kinds of task', () => {
+  assert.equal(scheduleLabel({ repeats: false }), 'One-time');
+  assert.equal(scheduleLabel({ repeats: true, frequency_days: 14 }), 'Every 2 weeks');
+  assert.equal(scheduleLabel({ frequency_days: 30 }), 'Monthly');
+});
+
+// ---------------------------------------------------------------------------
+// slow task priority
+// ---------------------------------------------------------------------------
+test('priorityLabel falls back to normal for missing or junk values', () => {
+  assert.equal(priorityLabel('high'), 'High');
+  assert.equal(priorityLabel(undefined), 'Normal');
+  assert.equal(priorityLabel('urgent'), 'Normal');
+});
+
+test('sortSlowTasks puts high priority first, then the soonest due', () => {
+  const tasks = [
+    { name: 'low-soon', priority: 'low', next_due: ago(9 * DAY) },
+    { name: 'normal', priority: 'normal', next_due: ago(8 * DAY) },
+    { name: 'high-late', priority: 'high', next_due: ago(DAY) },
+    { name: 'high-early', priority: 'high', next_due: ago(5 * DAY) },
+  ];
+
+  assert.deepEqual(
+    sortSlowTasks(tasks).map((t) => t.name),
+    ['high-early', 'high-late', 'normal', 'low-soon'],
+    'priority is the tiebreak; within a priority the oldest due date leads',
+  );
+});
+
+test('sortSlowTasks does not mutate the list it was handed', () => {
+  const tasks = [
+    { name: 'a', priority: 'low', next_due: ago(DAY) },
+    { name: 'b', priority: 'high', next_due: ago(DAY) },
+  ];
+
+  sortSlowTasks(tasks);
+
+  assert.deepEqual(tasks.map((t) => t.name), ['a', 'b']);
 });

@@ -524,3 +524,126 @@ test('vehicle writes surface a missing RLS policy instead of silently passing', 
   await assert.rejects(() => api.setVehicleStatus('v-1', 'out_of_service'), /schema is up to date/i);
   await assert.rejects(() => api.setVehicleActive('v-1', false), /schema is up to date/i);
 });
+
+// ---------------------------------------------------------------------------
+// vehicle maintenance reports
+// ---------------------------------------------------------------------------
+test('reportVehicleIssue files against the vehicle and normalises empty notes', async () => {
+  const { api, calls } = setup(byTable({ vehicle_maintenance: { data: [] } }));
+
+  await api.reportVehicleIssue('v-1', 'Warning light on', '');
+
+  assert.equal(calls[0].table, 'vehicle_maintenance');
+  assert.equal(calls[0].op, 'insert');
+  assert.deepEqual(calls[0].payload, { vehicle_id: 'v-1', issue: 'Warning light on', notes: null });
+});
+
+test('fetchOpenVehicleIssues reads open rows directly rather than a capped history', async () => {
+  // The same trap fetchOpenDriverIncidents exists to avoid: counting from the
+  // capped log drifts low as resolved reports accumulate.
+  const { api, calls } = setup(byTable({ vehicle_maintenance: { data: [] } }));
+
+  await api.fetchOpenVehicleIssues();
+
+  assert.equal(findFilter(calls[0], 'status').value, 'open');
+  assert.ok(!calls[0].modifiers.some((m) => m.type === 'limit'), 'open issues must not be capped');
+});
+
+test('resolving a vehicle issue stamps resolved_at, reopening clears it', async () => {
+  const { api, calls } = setup(byTable({ vehicle_maintenance: { data: { id: 'm-1' } } }));
+
+  await api.setVehicleIssueStatus('m-1', true);
+  assert.equal(calls[0].payload.status, 'resolved');
+  assert.ok(calls[0].payload.resolved_at, 'a resolved report records when');
+
+  await api.setVehicleIssueStatus('m-1', false);
+  assert.equal(calls[1].payload.status, 'open');
+  assert.equal(calls[1].payload.resolved_at, null, 'a reopened report must not keep a stale timestamp');
+});
+
+test('vehicle issue reports are never deleted — the maintenance log is history', async () => {
+  const { api, calls } = setup(byTable({ vehicle_maintenance: { data: { id: 'm-1' } } }));
+
+  await api.setVehicleIssueStatus('m-1', true);
+
+  assert.ok(calls.every((c) => c.op !== 'delete'));
+});
+
+// ---------------------------------------------------------------------------
+// slow tasks: repeating vs one-time, and priority
+// ---------------------------------------------------------------------------
+test('a repeating task keeps its cadence and never has next_due written from the form', async () => {
+  // next_due belongs to the slow_tasks_before_write trigger for a repeating
+  // task. Writing it here would fight the trigger on every save.
+  const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
+
+  await api.createSlowTask({
+    name: 'Deep clean bags',
+    description: '',
+    repeats: true,
+    frequency_days: 30,
+    priority: 'high',
+    next_due: '2026-10-01T12:00:00.000Z',
+  });
+
+  assert.deepEqual(calls[0].payload, {
+    name: 'Deep clean bags',
+    description: null,
+    repeats: true,
+    frequency_days: 30,
+    priority: 'high',
+  });
+});
+
+test('a one-time task carries a due date and drops the cadence entirely', async () => {
+  // Leaving a stale frequency_days on a row whose repeats flag just went false
+  // trips slow_tasks_repeats_needs_frequency the moment somebody flips it back.
+  const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
+
+  await api.updateSlowTask('t-1', {
+    name: 'Swap the floor mats',
+    description: 'One-off',
+    repeats: false,
+    frequency_days: 30,
+    priority: 'low',
+    next_due: '2026-10-01T12:00:00.000Z',
+  });
+
+  assert.equal(calls[0].op, 'update');
+  assert.equal(calls[0].payload.repeats, false);
+  assert.equal(calls[0].payload.frequency_days, null);
+  assert.equal(calls[0].payload.next_due, '2026-10-01T12:00:00.000Z');
+});
+
+test('editing a one-time task without touching the date leaves next_due alone', async () => {
+  const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
+
+  await api.updateSlowTask('t-1', {
+    name: 'Swap the floor mats',
+    repeats: false,
+    frequency_days: null,
+    priority: 'normal',
+    next_due: null,
+  });
+
+  assert.ok(!('next_due' in calls[0].payload), 'a blank date must not clear the stored due date');
+});
+
+test('a task saved with no priority still gets one', async () => {
+  const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
+
+  await api.createSlowTask({ name: 'Inspect equipment', repeats: true, frequency_days: 14 });
+
+  assert.equal(calls[0].payload.priority, 'normal');
+});
+
+test('completeSlowTask stamps last_completed and lets the trigger own next_due', async () => {
+  const { api, calls } = setup(
+    byTable({ slow_task_completions: { data: [] }, slow_tasks: { data: { id: 't-1' } } }),
+  );
+
+  await api.completeSlowTask('t-1', 'd-1', 'done');
+
+  assert.deepEqual(calls.map((c) => c.table), ['slow_task_completions', 'slow_tasks']);
+  assert.deepEqual(Object.keys(calls[1].payload), ['last_completed']);
+});

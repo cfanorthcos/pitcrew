@@ -4,7 +4,11 @@ import {
   updateVehicle,
   setVehicleStatus,
   setVehicleActive,
+  fetchOpenVehicleIssues,
+  fetchVehicleMaintenanceHistory,
+  setVehicleIssueStatus,
   VEHICLE_STATUSES,
+  SLOW_TASK_PRIORITIES,
   fetchOpenSessions,
   forceCloseSession,
   fetchAllDrivers,
@@ -45,9 +49,12 @@ import {
   safeHex,
   formatDate,
   formatDateTime,
-  frequencyLabel,
+  scheduleLabel,
   isNeedsCleaning,
   isTaskDue,
+  isTaskFinished,
+  compareSlowTasks,
+  priorityLabel,
   isShiftOverdue,
   formatElapsed,
   showError,
@@ -71,6 +78,7 @@ import {
   textInput,
   colorInput,
   numberInput,
+  dateInput,
   textArea,
   select,
   modalActions,
@@ -96,14 +104,16 @@ async function renderDashboard() {
     // counts, and counting a truncated list undercounts once history outgrows
     // HISTORY_PAGE_SIZE. driver_incidents stays best-effort so the dashboard
     // still renders on a project whose schema migration hasn't been applied.
-    const [vehicles, openSessions, hotBags, openBagIssues, slowTasks, openIncidents_] = await Promise.all([
-      fetchVehiclesWithAvailability(),
-      fetchOpenSessions(),
-      fetchHotBags(),
-      fetchOpenHotBagIssues(),
-      fetchSlowTasks(),
-      fetchOpenDriverIncidents().catch(() => []),
-    ]);
+    const [vehicles, openSessions, hotBags, openBagIssues, slowTasks, openIncidents_, openVehicleIssues_] =
+      await Promise.all([
+        fetchVehiclesWithAvailability(),
+        fetchOpenSessions(),
+        fetchHotBags(),
+        fetchOpenHotBagIssues(),
+        fetchSlowTasks(),
+        fetchOpenDriverIncidents().catch(() => []),
+        fetchOpenVehicleIssues().catch(() => []),
+      ]);
 
     const out = vehicles.filter((v) => v.activeSession).length;
     const free = vehicles.filter((v) => !v.activeSession && v.status !== 'out_of_service').length;
@@ -111,6 +121,7 @@ async function renderDashboard() {
     const dueTasks = slowTasks.filter(isTaskDue).length;
     const openIssues = openBagIssues.length;
     const openIncidents = openIncidents_.length;
+    const openVehicleIssues = openVehicleIssues_.length;
 
     const overdueSessions = openSessions.filter((s) => isShiftOverdue(s.start_time));
     const shiftRows = openSessions
@@ -143,6 +154,7 @@ async function renderDashboard() {
         ${statCard(free, 'Vehicles Free', 'vehicles')}
         ${statCard(needsCleaning, 'Hot Bags Needing Cleaning', 'hotbags', needsCleaning ? 'is-warn' : '')}
         ${statCard(dueTasks, 'Slow Tasks Due', 'slowtasks', dueTasks ? 'is-warn' : '')}
+        ${statCard(openVehicleIssues, 'Open Vehicle Issues', 'vehicles', openVehicleIssues ? 'is-bad' : '')}
         ${statCard(openIssues, 'Open Bag Issues', 'hotbags', openIssues ? 'is-warn' : '')}
         ${statCard(openIncidents, 'Open Driver Incidents', 'incidents', openIncidents ? 'is-bad' : '')}
       </div>
@@ -316,10 +328,26 @@ async function renderVehicles() {
   const container = document.getElementById('section-vehicles');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const vehicles = await fetchVehiclesWithAvailability({ includeInactive: true });
+    // Three reads, for the same reason the Hot Bags screen takes three: the log
+    // below is capped history, while the per-vehicle Open Issues column has to
+    // count every open row including ones older than the cap. Both are
+    // best-effort so the fleet table still renders on a project that hasn't run
+    // the vehicle_maintenance migration.
+    const [vehicles, maintenance, openVehicleIssues] = await Promise.all([
+      fetchVehiclesWithAvailability({ includeInactive: true }),
+      fetchVehicleMaintenanceHistory().catch(() => []),
+      fetchOpenVehicleIssues().catch(() => []),
+    ]);
+
+    const openIssuesByVehicle = new Map();
+    openVehicleIssues.forEach((m) =>
+      openIssuesByVehicle.set(m.vehicle_id, (openIssuesByVehicle.get(m.vehicle_id) || 0) + 1),
+    );
+
     const rows = vehicles
       .map((v) => {
         const offRoad = v.status === 'out_of_service';
+        const openCount = openIssuesByVehicle.get(v.id) || 0;
         return `
           <tr class="clickable ${v.active ? '' : 'is-inactive'}" data-vehicle-id="${escapeHtml(v.id)}">
             <td><strong>${escapeHtml(v.name)}</strong></td>
@@ -335,6 +363,7 @@ async function renderVehicles() {
                 ? `<span class="elapsed" data-since="${escapeHtml(v.activeSession.start_time)}">—</span>`
                 : '—'
             }</td>
+            <td>${openCount}</td>
             <td>${rowActions([
               { label: 'Edit', className: 'edit-vehicle-btn', data: { 'data-vehicle-id': v.id } },
               // The urgent path gets its own one-tap button. A car comes off the
@@ -356,13 +385,52 @@ async function renderVehicles() {
       })
       .join('');
 
+    const maintenanceRows = maintenance
+      .map(
+        (m) => `
+          <tr>
+            <td><strong>${escapeHtml(m.vehicles?.name ?? '—')}</strong></td>
+            <td>${escapeHtml(m.issue)}</td>
+            <td class="cell-wrap">${escapeHtml(m.notes ?? '—')}</td>
+            <td>${badge(m.status, m.status === 'open' ? 'warn' : 'good')}</td>
+            <td>${formatDateTime(m.submitted_at)}</td>
+            <td>${rowActions([
+              {
+                label: m.status === 'open' ? 'Resolve' : 'Reopen',
+                className: 'toggle-vehicle-issue-btn',
+                data: { 'data-maintenance-id': m.id },
+              },
+            ])}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
     container.innerHTML = `
       ${sectionToolbar('Vehicles', actionButton('+ Add Vehicle', 'add-vehicle-btn'))}
       ${sectionHint('Tap a row for its full driving history. Retiring keeps the history and takes it off the kiosk.')}
       ${dataTable({
-        columns: ['Vehicle', 'Color', 'Status', 'Current Driver', 'Shift Started', 'Elapsed', 'Actions'],
+        columns: [
+          'Vehicle',
+          'Color',
+          'Status',
+          'Current Driver',
+          'Shift Started',
+          'Elapsed',
+          'Open Issues',
+          'Actions',
+        ],
         rows,
         empty: 'No vehicles configured.',
+      })}
+      <h2 class="section-title">Reported Issues</h2>
+      ${sectionHint(
+        'Filed by drivers from the kiosk. Resolving clears it off the board and the dashboard count; it never deletes the report. Taking the car off the road is a separate decision, above.',
+      )}
+      ${dataTable({
+        columns: ['Vehicle', 'Issue', 'Notes', 'Status', 'Submitted', 'Actions'],
+        rows: maintenanceRows,
+        empty: 'No vehicle issues reported.',
       })}
     `;
 
@@ -391,6 +459,21 @@ async function renderVehicles() {
           await renderVehicles();
         } catch (err) {
           showError(err.message || 'Could not update this vehicle. Try again.');
+          btn.disabled = false;
+        }
+      });
+    });
+
+    container.querySelectorAll('.toggle-vehicle-issue-btn').forEach((btn) => {
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const report = maintenance.find((m) => m.id === btn.dataset.maintenanceId);
+        btn.disabled = true;
+        try {
+          await setVehicleIssueStatus(report.id, report.status === 'open');
+          await renderVehicles();
+        } catch (err) {
+          showError(err.message || 'Could not update this issue. Try again.');
           btn.disabled = false;
         }
       });
@@ -1127,8 +1210,32 @@ async function renderHotBagsAdmin() {
 // ---------------------------------------------------------------------------
 // slow tasks (full CRUD + completion history)
 // ---------------------------------------------------------------------------
+// <input type="date"> speaks YYYY-MM-DD in local time and nothing else; a
+// timestamptz sliced with toISOString() is UTC, which lands a day early for
+// anyone west of Greenwich. Go through the local date parts instead.
+function toDateInputValue(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Back the other way, anchored at local noon. Midnight is the obvious choice and
+// the wrong one: a due date stored as local midnight is the previous day in UTC
+// for half the world, and next_due is read back as an instant.
+function fromDateInputValue(value) {
+  if (!value) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 12, 0, 0).toISOString();
+}
+
 function openSlowTaskModal(task = null) {
   const isEdit = Boolean(task);
+  // Repeating is the default because most of these are; a one-off is the
+  // exception somebody deliberately picks.
+  const repeatsInitially = task ? task.repeats !== false : true;
+
   const sheet = openModal(
     isEdit ? `Edit ${task.name}` : 'Add a slow task',
     `
@@ -1144,32 +1251,96 @@ function openSlowTaskModal(task = null) {
         textArea({ id: 'task-description-input', placeholder: 'Optional', value: task?.description ?? '' }),
       )}
       ${field(
-        'Recurs every (days)',
-        'task-frequency-input',
-        numberInput({ id: 'task-frequency-input', min: 1, value: task?.frequency_days ?? '' }),
+        'Schedule',
+        'task-repeats-select',
+        select({
+          id: 'task-repeats-select',
+          options: [
+            { value: 'repeats', label: 'Repeats on a schedule', selected: repeatsInitially },
+            { value: 'once', label: 'One-time — done once and finished', selected: !repeatsInitially },
+          ],
+        }),
       )}
+      <div id="task-frequency-field"${repeatsInitially ? '' : ' class="hidden"'}>
+        ${field(
+          'Recurs every (days)',
+          'task-frequency-input',
+          numberInput({ id: 'task-frequency-input', min: 1, value: task?.frequency_days ?? '' }),
+        )}
+      </div>
+      <div id="task-duedate-field"${repeatsInitially ? ' class="hidden"' : ''}>
+        ${field(
+          'Due date',
+          'task-duedate-input',
+          dateInput({ id: 'task-duedate-input', value: toDateInputValue(task?.next_due) }),
+        )}
+      </div>
+      ${field(
+        'Priority',
+        'task-priority-select',
+        select({
+          id: 'task-priority-select',
+          options: SLOW_TASK_PRIORITIES.map((p) => ({
+            value: p.value,
+            label: p.label,
+            selected: (task?.priority ?? 'normal') === p.value,
+          })),
+        }),
+      )}
+      <p class="meta">
+        Priority orders the kiosk's "Due now" list when several tasks land at
+        once. It never changes when something becomes due.
+      </p>
       ${modalActions(isEdit ? 'Save Changes' : 'Add Task', 'task-save-btn')}
     `,
   );
 
+  const repeatsSelect = sheet.querySelector('#task-repeats-select');
+  const frequencyField = sheet.querySelector('#task-frequency-field');
+  const dueDateField = sheet.querySelector('#task-duedate-field');
+
+  repeatsSelect.addEventListener('change', () => {
+    const repeats = repeatsSelect.value === 'repeats';
+    frequencyField.classList.toggle('hidden', !repeats);
+    dueDateField.classList.toggle('hidden', repeats);
+  });
+
   const saveBtn = sheet.querySelector('#task-save-btn');
   saveBtn.addEventListener('click', async () => {
     const name = sheet.querySelector('#task-name-input').value.trim();
+    const repeats = repeatsSelect.value === 'repeats';
     const frequencyDays = parseInt(sheet.querySelector('#task-frequency-input').value, 10);
+    const nextDue = fromDateInputValue(sheet.querySelector('#task-duedate-input').value);
+
     if (!name) {
       showError('Name is required.');
       return;
     }
-    if (!Number.isFinite(frequencyDays) || frequencyDays < 1) {
+    if (repeats && (!Number.isFinite(frequencyDays) || frequencyDays < 1)) {
       showError('Frequency must be at least 1 day.');
       return;
     }
+    // Only enforced when adding: an existing one-off already has a next_due, so
+    // clearing the field on an edit should leave that date alone rather than
+    // block the save.
+    if (!repeats && !nextDue && !isEdit) {
+      showError('A one-time task needs a due date.');
+      return;
+    }
+
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      const description = sheet.querySelector('#task-description-input').value.trim();
-      if (isEdit) await updateSlowTask(task.id, { name, description, frequency_days: frequencyDays });
-      else await createSlowTask(name, description, frequencyDays);
+      const payload = {
+        name,
+        description: sheet.querySelector('#task-description-input').value.trim(),
+        repeats,
+        frequency_days: frequencyDays,
+        priority: sheet.querySelector('#task-priority-select').value,
+        next_due: nextDue,
+      };
+      if (isEdit) await updateSlowTask(task.id, payload);
+      else await createSlowTask(payload);
       closeModal();
       showSuccess(isEdit ? 'Task updated.' : `${name} added.`);
       await renderSlowTasksAdmin();
@@ -1185,18 +1356,29 @@ async function renderSlowTasksAdmin() {
   const container = document.getElementById('section-slowtasks');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const tasks = await fetchAllSlowTasks();
+    // Active first — a deactivated task is nobody's next job whatever its
+    // priority — and within that, the order the kiosk shows, so what an admin
+    // reads here is what a driver sees on the wall.
+    const tasks = [...(await fetchAllSlowTasks())].sort(
+      (a, b) => Number(b.active) - Number(a.active) || compareSlowTasks(a, b),
+    );
     const rows = tasks
       .map((t) => {
+        const finished = isTaskFinished(t);
         const due = t.active && isTaskDue(t);
+        // "Completed" is a one-off's terminal state and is deliberately not the
+        // same thing as Inactive: nobody retired it, it just ran out of work to
+        // do. Inactive still wins, because a deactivated task is off the kiosk
+        // whatever else is true of it.
         const tone = !t.active ? 'muted' : due ? 'warn' : 'good';
-        const label = !t.active ? 'Inactive' : due ? 'Due' : 'On Track';
+        const label = !t.active ? 'Inactive' : finished ? 'Completed' : due ? 'Due' : 'On Track';
         return `
           <tr class="clickable ${t.active ? '' : 'is-inactive'}" data-task-id="${escapeHtml(t.id)}">
             <td><strong>${escapeHtml(t.name)}</strong></td>
-            <td>${frequencyLabel(t.frequency_days)}</td>
+            <td>${escapeHtml(scheduleLabel(t))}</td>
+            <td>${escapeHtml(priorityLabel(t.priority))}</td>
             <td>${formatDate(t.last_completed, 'Never')}</td>
-            <td>${formatDate(t.next_due)}</td>
+            <td>${finished ? '—' : formatDate(t.next_due)}</td>
             <td>${badge(label, tone)}</td>
             <td>${rowActions([
               { label: 'Edit', className: 'edit-task-btn', data: { 'data-task-id': t.id } },
@@ -1213,8 +1395,11 @@ async function renderSlowTasksAdmin() {
 
     container.innerHTML = `
       ${sectionToolbar('Slow Tasks', actionButton('+ Add Slow Task', 'add-task-btn'))}
+      ${sectionHint(
+        'A repeating task rolls forward by its own cadence every time it is completed. A one-time task is finished once it is done and drops off the kiosk on its own. Priority orders the kiosk list when several are due at once.',
+      )}
       ${dataTable({
-        columns: ['Task', 'Frequency', 'Last Completed', 'Next Due', 'Status', 'Actions'],
+        columns: ['Task', 'Schedule', 'Priority', 'Last Completed', 'Next Due', 'Status', 'Actions'],
         rows,
         empty: 'No slow tasks configured.',
       })}
@@ -1333,6 +1518,12 @@ document.getElementById('admin-nav').addEventListener('click', (event) => {
 
 // ---------------------------------------------------------------------------
 // PIN lock screen — casual deterrent only, not real auth (see config.js)
+//
+// The PIN is asked for every single time admin is opened. It used to be
+// remembered for the rest of the browser session, which on the one device that
+// matters — the wall-mounted iPad, where the session outlives everybody's shift
+// — meant it was asked once and then never again. Nothing is persisted here on
+// purpose: leaving admin is what locks it, and there is no state to go stale.
 // ---------------------------------------------------------------------------
 const LOCK_STORAGE_KEY = 'pitcrew_admin_unlocked';
 
@@ -1343,10 +1534,11 @@ function unlockAdmin() {
 }
 
 function initLockScreen() {
-  if (sessionStorage.getItem(LOCK_STORAGE_KEY) === 'true') {
-    unlockAdmin();
-    return;
-  }
+  // Clear the key the old build wrote. Without this, an iPad that unlocked admin
+  // before this change carries that flag for the life of its browser session —
+  // it just wouldn't be read anymore, which is the kind of leftover that reads
+  // as "still unlocked" to anyone who inspects storage.
+  sessionStorage.removeItem(LOCK_STORAGE_KEY);
 
   const pinInput = document.getElementById('lock-pin-input');
   const submitBtn = document.getElementById('lock-submit-btn');
@@ -1354,7 +1546,6 @@ function initLockScreen() {
 
   function attemptUnlock() {
     if (pinInput.value === ADMIN_PIN) {
-      sessionStorage.setItem(LOCK_STORAGE_KEY, 'true');
       unlockAdmin();
     } else {
       errorEl.classList.remove('hidden');
@@ -1369,6 +1560,14 @@ function initLockScreen() {
   });
   pinInput.focus();
 }
+
+// Safari's back-forward cache restores a page whole — DOM, scroll position and
+// all — without re-running any module, so tapping "Back to kiosk" and then Back
+// again would hand over an already-unlocked dashboard and never call the code
+// above. Reload instead, which puts the lock screen back.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) window.location.reload();
+});
 
 initOfflineBanner();
 startTicker();

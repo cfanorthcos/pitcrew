@@ -2,6 +2,8 @@ import {
   fetchActiveDrivers,
   fetchRecentDriverIds,
   fetchVehiclesWithAvailability,
+  reportVehicleIssue,
+  fetchOpenVehicleIssues,
   createDriver,
   checkoutVehicle,
   fetchChecklistItems,
@@ -19,9 +21,12 @@ import {
   safeHex,
   inkOn,
   formatRelativeDays,
-  frequencyLabel,
+  scheduleLabel,
   isNeedsCleaning,
   isTaskDue,
+  isTaskFinished,
+  sortSlowTasks,
+  priorityLabel,
   isShiftOverdue,
   showError,
   showSuccess,
@@ -63,6 +68,19 @@ const VERSION_CHECK_MS = 300000;
 
 const RECENT_LIMIT = 8;
 const ISSUE_OPTIONS = ['Broken zipper', 'Damaged insulation', 'Dirty', 'Torn', 'Other'];
+
+// Deliberately not the same list as the hot bags': a driver reporting a car has
+// a different set of things to say, and "Other" plus the notes box catches the
+// rest. Reporting never changes vehicles.status — that call is the operator's,
+// and it happens on the admin Vehicles screen once somebody has read the report.
+const VEHICLE_ISSUE_OPTIONS = [
+  'Warning light on',
+  'Damage',
+  'Tire or brakes',
+  'Low fuel',
+  'Needs cleaning',
+  'Other',
+];
 
 const state = {
   view: 'vehicles',
@@ -176,7 +194,7 @@ function vehicleState(vehicle) {
   return 'free';
 }
 
-function vehicleTile(vehicle) {
+function vehicleTile(vehicle, openIssues = 0) {
   const kind = vehicleState(vehicle);
   const session = vehicle.activeSession;
   const paint = kind === 'out' ? '#c7c7cc' : safeHex(vehicle.color_hex);
@@ -205,10 +223,20 @@ function vehicleTile(vehicle) {
     out: `<div class="card-meta">Not available to take.</div>`,
   }[kind];
 
+  // Same treatment the hot bag cards give an open report. Without it a driver
+  // flags a warning light and the tile keeps reading "Available" to the next
+  // person who walks up, until an admin happens to open the dashboard.
+  const flag = openIssues
+    ? `<div class="flag">${icon.warning(20)}${escapeHtml(
+        `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
+      )}</div>`
+    : '';
+
   const body = `
     ${glyph}
     <div class="card-title${kind === 'out' ? ' is-dim' : ''}">${escapeHtml(vehicle.name)}</div>
     ${status}
+    ${flag}
     <div class="card-spacer"></div>
     ${person}
     ${action}
@@ -225,8 +253,16 @@ async function loadVehicles({ spinner = true } = {}) {
   const board = $('vehicle-board');
   if (spinner && board.children.length === 0) board.innerHTML = emptyState('Loading…');
   try {
-    const vehicles = await fetchVehiclesWithAvailability();
+    // Best-effort on the issues, like the hot bag tab: a project that hasn't run
+    // the vehicle_maintenance migration yet still gets a working board.
+    const [vehicles, openIssues] = await Promise.all([
+      fetchVehiclesWithAvailability(),
+      fetchOpenVehicleIssues().catch(() => []),
+    ]);
     state.vehicles = vehicles;
+
+    const issueByVehicle = new Map();
+    openIssues.forEach((i) => issueByVehicle.set(i.vehicle_id, (issueByVehicle.get(i.vehicle_id) || 0) + 1));
 
     const out = vehicles.filter((v) => v.activeSession).length;
     const free = vehicles.filter((v) => !v.activeSession && v.status !== 'out_of_service').length;
@@ -238,7 +274,7 @@ async function loadVehicles({ spinner = true } = {}) {
     }
 
     board.innerHTML = vehicles.length
-      ? vehicles.map(vehicleTile).join('')
+      ? vehicles.map((v) => vehicleTile(v, issueByVehicle.get(v.id) || 0)).join('')
       : emptyState('No vehicles configured.');
     refreshTickers();
   } catch {
@@ -255,6 +291,88 @@ $('vehicle-board').addEventListener('click', (event) => {
   state.vehicle = vehicle;
   switchView(vehicle.activeSession ? 'return' : 'identity');
 });
+
+$('report-vehicle-btn').addEventListener('click', () => openVehicleIssueModal());
+
+// Every active vehicle is offered, including the ones already out of service and
+// the ones somebody is driving right now — those are the two that most need a
+// second report, and neither tile on the board is tappable to get here.
+function openVehicleIssueModal() {
+  if (state.vehicles.length === 0) {
+    showError('No vehicles to report on yet.');
+    return;
+  }
+
+  let selected = null;
+  const sheet = openModal('Report a vehicle issue', `
+    <h2>Report Vehicle Issue</h2>
+    ${field(
+      'Which vehicle?',
+      'vehicle-issue-select',
+      select({
+        id: 'vehicle-issue-select',
+        placeholder: 'Choose a vehicle',
+        options: state.vehicles.map((v) => ({ value: v.id, label: v.name })),
+      }),
+    )}
+    <div>
+      <span class="field-label">What&rsquo;s wrong?</span>
+      <div class="option-list" role="group" aria-label="What is wrong">
+        ${VEHICLE_ISSUE_OPTIONS.map(
+          (opt) =>
+            `<button type="button" class="option-btn" data-issue="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`,
+        ).join('')}
+      </div>
+    </div>
+    ${field(
+      'Notes',
+      'vehicle-issue-notes',
+      textArea({
+        id: 'vehicle-issue-notes',
+        placeholder: 'Optional — what happened, and anything the next driver needs to know.',
+      }),
+    )}
+    ${modalActions('Submit', 'vehicle-issue-submit-btn', { disabled: true })}
+  `);
+
+  const vehicleSelect = sheet.querySelector('#vehicle-issue-select');
+  const submit = sheet.querySelector('#vehicle-issue-submit-btn');
+
+  // Both halves are required, so the button stays off until both are answered
+  // rather than failing on submit with nothing said about which half is missing.
+  const syncSubmit = () => {
+    submit.disabled = !vehicleSelect.value || !selected;
+  };
+
+  vehicleSelect.addEventListener('change', syncSubmit);
+  sheet.querySelectorAll('.option-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      sheet.querySelectorAll('.option-btn').forEach((b) => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      selected = btn.dataset.issue;
+      syncSubmit();
+    });
+  });
+
+  submit.addEventListener('click', async () => {
+    submit.disabled = true;
+    submit.textContent = 'Saving…';
+    try {
+      await reportVehicleIssue(
+        vehicleSelect.value,
+        selected,
+        sheet.querySelector('#vehicle-issue-notes').value.trim(),
+      );
+      closeModal();
+      showSuccess('Issue reported. Thanks for flagging it.');
+      await loadVehicles({ spinner: false });
+    } catch (err) {
+      showError(err.message || 'Could not submit this issue. Try again.');
+      submit.disabled = false;
+      submit.textContent = 'Submit';
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // who's driving
@@ -674,7 +792,10 @@ async function loadSlowTasks() {
   const container = $('slowtask-list');
   container.innerHTML = emptyState('Loading…');
   try {
-    const tasks = await fetchSlowTasks();
+    // Finished one-offs are dropped rather than listed as done: the kiosk is a
+    // "what needs doing" board, and a completed one-time task needs nothing. It
+    // stays visible in admin, where the record is the point.
+    const tasks = sortSlowTasks((await fetchSlowTasks()).filter((t) => !isTaskFinished(t)));
     const due = tasks.filter(isTaskDue);
     const upcoming = tasks.filter((t) => !isTaskDue(t));
 
@@ -697,7 +818,7 @@ async function loadSlowTasks() {
       ${
         upcoming.length
           ? `<div class="stack-gap">${groupHead('Coming up')}
-             <div class="group is-inset">${upcoming.map(upcomingRow).join('')}</div>
+             <div class="group is-inset">${upcomingByDate(upcoming).map(upcomingRow).join('')}</div>
              ${groupFoot('Shown so a spare ten minutes can be spent ahead of the due date rather than waiting for it.')}
              </div>`
           : ''
@@ -709,6 +830,20 @@ async function loadSlowTasks() {
   }
 }
 
+// Nothing for 'normal': a badge on every card is a badge on none of them, and
+// the point of priority here is to break the tie when several are due at once —
+// which the ordering already does. This just says why the order is what it is.
+function priorityPill(task) {
+  if (task.priority === 'high') return pill('High priority', 'info');
+  if (task.priority === 'low') return pill('Low priority', 'muted');
+  return '';
+}
+
+// Due tasks lead with priority; "Coming up" is a calendar, so it reads by date.
+function upcomingByDate(tasks) {
+  return [...tasks].sort((a, b) => new Date(a.next_due) - new Date(b.next_due));
+}
+
 function dueTaskCard(task) {
   return `
     <div class="feature">
@@ -717,9 +852,10 @@ function dueTaskCard(task) {
         <div class="feature-head">
           <span class="feature-title">${escapeHtml(task.name)}</span>
           ${pill('Due', 'warn')}
+          ${priorityPill(task)}
         </div>
         ${task.description ? `<span class="feature-desc">${escapeHtml(task.description)}</span>` : ''}
-        <span class="feature-meta">${escapeHtml(frequencyLabel(task.frequency_days))} · last done ${escapeHtml(
+        <span class="feature-meta">${escapeHtml(scheduleLabel(task))} · last done ${escapeHtml(
           formatRelativeDays(task.last_completed),
         )}</span>
       </div>
@@ -741,10 +877,11 @@ function daysUntil(iso) {
 }
 
 function upcomingRow(task) {
+  const prefix = task.priority && task.priority !== 'normal' ? `${priorityLabel(task.priority)} priority · ` : '';
   return listRow({
     leadingHtml: iconTile(icon.clock(26), { background: 'var(--fill)', color: 'var(--label-3)' }),
     title: task.name,
-    sub: `${frequencyLabel(task.frequency_days)} · last done ${formatRelativeDays(task.last_completed)}`,
+    sub: `${prefix}${scheduleLabel(task)} · last done ${formatRelativeDays(task.last_completed)}`,
     trailingHtml: `<span class="pill pill-muted" style="margin-top:0">${escapeHtml(
       daysUntil(task.next_due) ?? '—',
     )}</span>`,
