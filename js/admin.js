@@ -9,6 +9,8 @@ import {
   setVehicleIssueStatus,
   VEHICLE_STATUSES,
   SLOW_TASK_PRIORITIES,
+  SLOW_TASK_SCHEDULES,
+  INTERVAL_UNITS,
   fetchOpenSessions,
   forceCloseSession,
   fetchAllDrivers,
@@ -34,6 +36,7 @@ import {
   updateSlowTask,
   setSlowTaskActive,
   fetchSlowTaskCompletions,
+  fetchSlowTaskCompletionCounts,
   fetchAllChecklistItems,
   createChecklistItem,
   updateChecklistItem,
@@ -51,8 +54,13 @@ import {
   formatDateTime,
   scheduleLabel,
   isNeedsCleaning,
-  isTaskDue,
-  isTaskFinished,
+  taskStatus,
+  taskSchedule,
+  taskDueTimes,
+  taskIntervalMinutes,
+  clockValue,
+  completionNames,
+  startOfTodayIso,
   compareSlowTasks,
   priorityLabel,
   isShiftOverdue,
@@ -79,6 +87,7 @@ import {
   colorInput,
   numberInput,
   dateInput,
+  timeInput,
   textArea,
   select,
   modalActions,
@@ -104,21 +113,35 @@ async function renderDashboard() {
     // counts, and counting a truncated list undercounts once history outgrows
     // HISTORY_PAGE_SIZE. driver_incidents stays best-effort so the dashboard
     // still renders on a project whose schema migration hasn't been applied.
-    const [vehicles, openSessions, hotBags, openBagIssues, slowTasks, openIncidents_, openVehicleIssues_] =
-      await Promise.all([
-        fetchVehiclesWithAvailability(),
-        fetchOpenSessions(),
-        fetchHotBags(),
-        fetchOpenHotBagIssues(),
-        fetchSlowTasks(),
-        fetchOpenDriverIncidents().catch(() => []),
-        fetchOpenVehicleIssues().catch(() => []),
-      ]);
+    const [
+      vehicles,
+      openSessions,
+      hotBags,
+      openBagIssues,
+      slowTasks,
+      openIncidents_,
+      openVehicleIssues_,
+      doneToday,
+    ] = await Promise.all([
+      fetchVehiclesWithAvailability(),
+      fetchOpenSessions(),
+      fetchHotBags(),
+      fetchOpenHotBagIssues(),
+      fetchSlowTasks(),
+      fetchOpenDriverIncidents().catch(() => []),
+      fetchOpenVehicleIssues().catch(() => []),
+      fetchSlowTaskCompletionCounts(startOfTodayIso()).catch(() => new Map()),
+    ]);
 
     const out = vehicles.filter((v) => v.activeSession).length;
     const free = vehicles.filter((v) => !v.activeSession && v.status !== 'out_of_service').length;
     const needsCleaning = hotBags.filter(isNeedsCleaning).length;
-    const dueTasks = slowTasks.filter(isTaskDue).length;
+    // Through taskStatus with the day's counts, the same as the kiosk badge —
+    // a times_per_day task that has had all its runs is not due, and a tile that
+    // disagrees with the wall is worse than no tile.
+    const dueTasks = slowTasks.filter(
+      (t) => taskStatus(t, { doneToday: doneToday.get(t.id) || 0 }).due,
+    ).length;
     const openIssues = openBagIssues.length;
     const openIncidents = openIncidents_.length;
     const openVehicleIssues = openVehicleIssues_.length;
@@ -1230,11 +1253,33 @@ function fromDateInputValue(value) {
   return new Date(year, month - 1, day, 12, 0, 0).toISOString();
 }
 
+// A stored cadence is always minutes; the form offers units. Show it back in
+// the largest unit that divides evenly, so "every 43200 minutes" comes back as
+// "1 month"-ish rather than as a number nobody can check at a glance.
+function splitInterval(minutes) {
+  if (!Number.isFinite(minutes) || minutes < 1) return { value: '', unit: 1440 };
+  for (const unit of [...INTERVAL_UNITS].reverse()) {
+    if (minutes % unit.value === 0) return { value: minutes / unit.value, unit: unit.value };
+  }
+  return { value: minutes, unit: 1 };
+}
+
+function timeRow(value) {
+  return `
+    <div class="time-row">
+      ${timeInput({ value, data: { 'data-time-input': 'true' } })}
+      <button type="button" class="btn btn-secondary btn-sm" data-remove-time>Remove</button>
+    </div>
+  `;
+}
+
 function openSlowTaskModal(task = null) {
   const isEdit = Boolean(task);
-  // Repeating is the default because most of these are; a one-off is the
-  // exception somebody deliberately picks.
-  const repeatsInitially = task ? task.repeats !== false : true;
+  // Interval is the default because most of these are a cadence; the other
+  // three are shapes somebody deliberately reaches for.
+  const initialSchedule = task ? taskSchedule(task) : 'interval';
+  const initialInterval = splitInterval(taskIntervalMinutes(task ?? {}));
+  const shown = (mode) => (initialSchedule === mode ? '' : ' class="hidden"');
 
   const sheet = openModal(
     isEdit ? `Edit ${task.name}` : 'Add a slow task',
@@ -1252,29 +1297,63 @@ function openSlowTaskModal(task = null) {
       )}
       ${field(
         'Schedule',
-        'task-repeats-select',
+        'task-schedule-select',
         select({
-          id: 'task-repeats-select',
-          options: [
-            { value: 'repeats', label: 'Repeats on a schedule', selected: repeatsInitially },
-            { value: 'once', label: 'One-time — done once and finished', selected: !repeatsInitially },
-          ],
+          id: 'task-schedule-select',
+          options: SLOW_TASK_SCHEDULES.map((o) => ({
+            value: o.value,
+            label: o.label,
+            selected: initialSchedule === o.value,
+          })),
         }),
       )}
-      <div id="task-frequency-field"${repeatsInitially ? '' : ' class="hidden"'}>
-        ${field(
-          'Recurs every (days)',
-          'task-frequency-input',
-          numberInput({ id: 'task-frequency-input', min: 1, value: task?.frequency_days ?? '' }),
-        )}
+
+      <div id="task-interval-field"${shown('interval')}>
+        <label class="field-label" for="task-frequency-input">Recurs every</label>
+        <div class="time-row">
+          ${numberInput({ id: 'task-frequency-input', min: 1, value: initialInterval.value })}
+          ${select({
+            id: 'task-frequency-unit',
+            options: INTERVAL_UNITS.map((u) => ({
+              value: u.value,
+              label: u.label,
+              selected: initialInterval.unit === u.value,
+            })),
+          })}
+        </div>
       </div>
-      <div id="task-duedate-field"${repeatsInitially ? ' class="hidden"' : ''}>
+
+      <div id="task-times-field"${shown('times_of_day')}>
+        <span class="field-label">Due at these times</span>
+        <div id="task-times-list"></div>
+        <button type="button" class="btn btn-secondary btn-sm" id="task-add-time-btn">+ Add another time</button>
+        <p class="meta">
+          Each time is its own run. A slot that passes without being done stays
+          visibly missed rather than sliding into the next one.
+        </p>
+      </div>
+
+      <div id="task-perday-field"${shown('times_per_day')}>
+        ${field(
+          'Times per day',
+          'task-perday-input',
+          numberInput({ id: 'task-perday-input', min: 1, value: task?.times_per_day ?? '' }),
+        )}
+        <p class="meta">
+          Stays on the kiosk until it has been done this many times today, so one
+          person can check it off, get logged for it, and leave it there for the
+          next person. The tally resets at midnight.
+        </p>
+      </div>
+
+      <div id="task-duedate-field"${shown('once')}>
         ${field(
           'Due date',
           'task-duedate-input',
           dateInput({ id: 'task-duedate-input', value: toDateInputValue(task?.next_due) }),
         )}
       </div>
+
       ${field(
         'Priority',
         'task-priority-select',
@@ -1295,35 +1374,71 @@ function openSlowTaskModal(task = null) {
     `,
   );
 
-  const repeatsSelect = sheet.querySelector('#task-repeats-select');
-  const frequencyField = sheet.querySelector('#task-frequency-field');
-  const dueDateField = sheet.querySelector('#task-duedate-field');
+  const scheduleSelect = sheet.querySelector('#task-schedule-select');
+  const FIELD_BY_MODE = {
+    interval: sheet.querySelector('#task-interval-field'),
+    times_of_day: sheet.querySelector('#task-times-field'),
+    times_per_day: sheet.querySelector('#task-perday-field'),
+    once: sheet.querySelector('#task-duedate-field'),
+  };
 
-  repeatsSelect.addEventListener('change', () => {
-    const repeats = repeatsSelect.value === 'repeats';
-    frequencyField.classList.toggle('hidden', !repeats);
-    dueDateField.classList.toggle('hidden', repeats);
+  scheduleSelect.addEventListener('change', () => {
+    Object.entries(FIELD_BY_MODE).forEach(([mode, el]) => {
+      el.classList.toggle('hidden', mode !== scheduleSelect.value);
+    });
+  });
+
+  // The time list is the one field that changes shape as it's edited. Values
+  // are read back out of the DOM before every re-render, so a half-typed time
+  // survives adding a row.
+  const timesList = sheet.querySelector('#task-times-list');
+  const readTimes = () => [...timesList.querySelectorAll('[data-time-input]')].map((i) => i.value);
+  const renderTimes = (values) => {
+    timesList.innerHTML = (values.length ? values : ['']).map(timeRow).join('');
+  };
+  renderTimes(task ? taskDueTimes(task).map(clockValue) : []);
+
+  sheet.querySelector('#task-add-time-btn').addEventListener('click', () => {
+    renderTimes([...readTimes(), '']);
+  });
+  timesList.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-remove-time]');
+    if (!btn) return;
+    const rows = [...timesList.querySelectorAll('.time-row')];
+    const index = rows.indexOf(btn.closest('.time-row'));
+    renderTimes(readTimes().filter((_, i) => i !== index));
   });
 
   const saveBtn = sheet.querySelector('#task-save-btn');
   saveBtn.addEventListener('click', async () => {
     const name = sheet.querySelector('#task-name-input').value.trim();
-    const repeats = repeatsSelect.value === 'repeats';
-    const frequencyDays = parseInt(sheet.querySelector('#task-frequency-input').value, 10);
+    const schedule = scheduleSelect.value;
+    const unit = parseInt(sheet.querySelector('#task-frequency-unit').value, 10);
+    const every = parseInt(sheet.querySelector('#task-frequency-input').value, 10);
+    const perDay = parseInt(sheet.querySelector('#task-perday-input').value, 10);
+    const dueTimes = [...new Set(readTimes().filter(Boolean))].sort();
     const nextDue = fromDateInputValue(sheet.querySelector('#task-duedate-input').value);
 
     if (!name) {
       showError('Name is required.');
       return;
     }
-    if (repeats && (!Number.isFinite(frequencyDays) || frequencyDays < 1)) {
-      showError('Frequency must be at least 1 day.');
+    if (schedule === 'interval' && (!Number.isFinite(every) || every < 1)) {
+      showError('An interval task needs a cadence of at least 1.');
       return;
     }
-    // Only enforced when adding: an existing one-off already has a next_due, so
-    // clearing the field on an edit should leave that date alone rather than
-    // block the save.
-    if (!repeats && !nextDue && !isEdit) {
+    if (schedule === 'times_of_day' && dueTimes.length === 0) {
+      showError('Add at least one time of day.');
+      return;
+    }
+    if (schedule === 'times_per_day' && (!Number.isFinite(perDay) || perDay < 1)) {
+      showError('Times per day must be at least 1.');
+      return;
+    }
+    // A one-off has to land on a date. Only skippable when the row already has
+    // one to keep — a clock-based task being switched to one-time has no stored
+    // next_due at all, and the database check would reject it.
+    if (schedule === 'once' && !nextDue && !task?.next_due) {
       showError('A one-time task needs a due date.');
       return;
     }
@@ -1334,8 +1449,10 @@ function openSlowTaskModal(task = null) {
       const payload = {
         name,
         description: sheet.querySelector('#task-description-input').value.trim(),
-        repeats,
-        frequency_days: frequencyDays,
+        schedule,
+        frequency_minutes: every * unit,
+        due_times: dueTimes,
+        times_per_day: perDay,
         priority: sheet.querySelector('#task-priority-select').value,
         next_due: nextDue,
       };
@@ -1352,33 +1469,49 @@ function openSlowTaskModal(task = null) {
   });
 }
 
+// One cell, four schedules. A times_per_day task has no next due instant worth
+// printing — what somebody wants from that row is how much of today is left in
+// it — so it answers with the tally instead.
+function nextDueCell(status) {
+  if (status.finished) return '—';
+  if (status.schedule === 'times_per_day') return `${status.doneToday} of ${status.target} today`;
+  if (status.due) return 'Now';
+  return status.nextAt ? formatDateTime(status.nextAt.toISOString()) : '—';
+}
+
 async function renderSlowTasksAdmin() {
   const container = document.getElementById('section-slowtasks');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
     // Active first — a deactivated task is nobody's next job whatever its
     // priority — and within that, the order the kiosk shows, so what an admin
-    // reads here is what a driver sees on the wall.
-    const tasks = [...(await fetchAllSlowTasks())].sort(
+    // reads here is what a driver sees on the wall. The counts read is what
+    // tells a times_per_day task how many runs are left in the day.
+    const [all, doneToday] = await Promise.all([
+      fetchAllSlowTasks(),
+      fetchSlowTaskCompletionCounts(startOfTodayIso()).catch(() => new Map()),
+    ]);
+    const statusOf = (task) => taskStatus(task, { doneToday: doneToday.get(task.id) || 0 });
+    const tasks = [...all].sort(
       (a, b) => Number(b.active) - Number(a.active) || compareSlowTasks(a, b),
     );
     const rows = tasks
       .map((t) => {
-        const finished = isTaskFinished(t);
-        const due = t.active && isTaskDue(t);
+        const status = statusOf(t);
+        const due = t.active && status.due;
         // "Completed" is a one-off's terminal state and is deliberately not the
         // same thing as Inactive: nobody retired it, it just ran out of work to
         // do. Inactive still wins, because a deactivated task is off the kiosk
         // whatever else is true of it.
         const tone = !t.active ? 'muted' : due ? 'warn' : 'good';
-        const label = !t.active ? 'Inactive' : finished ? 'Completed' : due ? 'Due' : 'On Track';
+        const label = !t.active ? 'Inactive' : status.finished ? 'Completed' : due ? 'Due' : 'On Track';
         return `
           <tr class="clickable ${t.active ? '' : 'is-inactive'}" data-task-id="${escapeHtml(t.id)}">
             <td><strong>${escapeHtml(t.name)}</strong></td>
             <td>${escapeHtml(scheduleLabel(t))}</td>
             <td>${escapeHtml(priorityLabel(t.priority))}</td>
-            <td>${formatDate(t.last_completed, 'Never')}</td>
-            <td>${finished ? '—' : formatDate(t.next_due)}</td>
+            <td>${formatDateTime(t.last_completed, 'Never')}</td>
+            <td>${escapeHtml(nextDueCell(status))}</td>
             <td>${badge(label, tone)}</td>
             <td>${rowActions([
               { label: 'Edit', className: 'edit-task-btn', data: { 'data-task-id': t.id } },
@@ -1396,7 +1529,7 @@ async function renderSlowTasksAdmin() {
     container.innerHTML = `
       ${sectionToolbar('Slow Tasks', actionButton('+ Add Slow Task', 'add-task-btn'))}
       ${sectionHint(
-        'A repeating task rolls forward by its own cadence every time it is completed. A one-time task is finished once it is done and drops off the kiosk on its own. Priority orders the kiosk list when several are due at once.',
+        'Four schedules: an interval that rolls forward from each completion, set times of day, a number of runs per day, or a one-time job that finishes itself. Priority orders the kiosk list when several are due at once.',
       )}
       ${dataTable({
         columns: ['Task', 'Schedule', 'Priority', 'Last Completed', 'Next Due', 'Status', 'Actions'],
@@ -1452,7 +1585,7 @@ async function showSlowTaskDetail(task) {
         (c) => `
           <tr>
             <td>${formatDateTime(c.completed_at)}</td>
-            <td>${escapeHtml(c.drivers?.name ?? 'Not specified')}</td>
+            <td>${escapeHtml(completionNames(c).join(', ') || 'Not specified')}</td>
             <td class="cell-wrap">${escapeHtml(c.notes ?? '—')}</td>
           </tr>
         `,

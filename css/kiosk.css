@@ -860,6 +860,15 @@ button {
   }
 }
 
+/* A roster longer than the sheet is tall. Scrolls inside the group rather than
+   pushing Mark Complete off the bottom of a modal nobody can scroll on an iPad
+   without losing the button. */
+.group.is-scroll {
+  max-height: 46vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* --------------------------------------------------------------------------
    empty + error states
    -------------------------------------------------------------------------- */

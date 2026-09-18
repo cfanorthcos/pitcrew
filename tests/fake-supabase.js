@@ -47,6 +47,10 @@ export function createFakeClient(handler = () => ({ data: [] })) {
         call.filters.push({ type: 'eq', column, value });
         return builder;
       },
+      gte(column, value) {
+        call.filters.push({ type: 'gte', column, value });
+        return builder;
+      },
       is(column, value) {
         call.filters.push({ type: 'is', column, value });
         return builder;

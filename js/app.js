@@ -14,6 +14,7 @@ import {
   reportHotBagIssue,
   fetchSlowTasks,
   completeSlowTask,
+  fetchSlowTaskCompletionCounts,
 } from './supabase.js';
 import { HOT_BAG_CLEAN_WINDOW_DAYS } from './config.js';
 import {
@@ -24,9 +25,13 @@ import {
   scheduleLabel,
   isNeedsCleaning,
   isTaskDue,
-  isTaskFinished,
+  taskStatus,
   sortSlowTasks,
   priorityLabel,
+  formatRelativeTime,
+  formatClockTime,
+  untilLabel,
+  startOfTodayIso,
   isShiftOverdue,
   showError,
   showSuccess,
@@ -175,12 +180,21 @@ function setTabCount(tab, count) {
 }
 
 async function refreshTabCounts() {
-  const [bags, tasks] = await Promise.all([
+  // The counts read is what tells a times_per_day task how many runs are left
+  // in the day. Best-effort: a badge that over-counts by showing a task as
+  // still due is the safe way to be wrong.
+  const [bags, tasks, doneToday] = await Promise.all([
     fetchHotBags().catch(() => null),
     fetchSlowTasks().catch(() => null),
+    fetchSlowTaskCompletionCounts(startOfTodayIso()).catch(() => new Map()),
   ]);
   if (bags) setTabCount('hotbags', bags.filter(isNeedsCleaning).length);
-  if (tasks) setTabCount('slowtasks', tasks.filter(isTaskDue).length);
+  if (tasks) {
+    setTabCount(
+      'slowtasks',
+      tasks.filter((t) => isTaskDue(t, { doneToday: doneToday.get(t.id) || 0 })).length,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -792,12 +806,18 @@ async function loadSlowTasks() {
   const container = $('slowtask-list');
   container.innerHTML = emptyState('Loading…');
   try {
+    const [all, doneToday] = await Promise.all([
+      fetchSlowTasks(),
+      fetchSlowTaskCompletionCounts(startOfTodayIso()).catch(() => new Map()),
+    ]);
+    const statusOf = (task) => taskStatus(task, { doneToday: doneToday.get(task.id) || 0 });
+
     // Finished one-offs are dropped rather than listed as done: the kiosk is a
     // "what needs doing" board, and a completed one-time task needs nothing. It
     // stays visible in admin, where the record is the point.
-    const tasks = sortSlowTasks((await fetchSlowTasks()).filter((t) => !isTaskFinished(t)));
-    const due = tasks.filter(isTaskDue);
-    const upcoming = tasks.filter((t) => !isTaskDue(t));
+    const tasks = sortSlowTasks(all.filter((t) => !statusOf(t).finished));
+    const due = tasks.filter((t) => statusOf(t).due);
+    const upcoming = tasks.filter((t) => !statusOf(t).due);
 
     setTabCount('slowtasks', due.length);
     $('k-trailing').innerHTML = due.length
@@ -812,13 +832,17 @@ async function loadSlowTasks() {
     container.innerHTML = `
       ${
         due.length
-          ? `${groupHead('Due now')}<div class="stack">${due.map(dueTaskCard).join('')}</div>`
+          ? `${groupHead('Due now')}<div class="stack">${due
+              .map((t) => dueTaskCard(t, statusOf(t)))
+              .join('')}</div>`
           : `${groupHead('Due now')}${emptyState('Nothing due right now. Nice work.')}`
       }
       ${
         upcoming.length
           ? `<div class="stack-gap">${groupHead('Coming up')}
-             <div class="group is-inset">${upcomingByDate(upcoming).map(upcomingRow).join('')}</div>
+             <div class="group is-inset">${upcomingByDate(upcoming, statusOf)
+               .map((t) => upcomingRow(t, statusOf(t)))
+               .join('')}</div>
              ${groupFoot('Shown so a spare ten minutes can be spent ahead of the due date rather than waiting for it.')}
              </div>`
           : ''
@@ -840,11 +864,31 @@ function priorityPill(task) {
 }
 
 // Due tasks lead with priority; "Coming up" is a calendar, so it reads by date.
-function upcomingByDate(tasks) {
-  return [...tasks].sort((a, b) => new Date(a.next_due) - new Date(b.next_due));
+// A clock-based task has no next_due column, so the sort goes through the same
+// status the cards use rather than the raw row.
+function upcomingByDate(tasks, statusOf) {
+  return [...tasks].sort(
+    (a, b) => (statusOf(a).nextAt?.getTime() ?? Infinity) - (statusOf(b).nextAt?.getTime() ?? Infinity),
+  );
 }
 
-function dueTaskCard(task) {
+// The second line of a task card. Every schedule answers "how often" the same
+// way, then says the one extra thing that schedule makes somebody wonder: how
+// many runs are left today, or which slot is the one going unanswered.
+function taskMetaLine(task, status) {
+  const cadence = scheduleLabel(task);
+  if (status.schedule === 'times_per_day') {
+    return `${cadence} · ${status.doneToday} of ${status.target} done today`;
+  }
+  if (status.schedule === 'times_of_day' && status.slotAt) {
+    return `${cadence} · the ${formatClockTime(
+      status.slotAt.getHours() * 60 + status.slotAt.getMinutes(),
+    )} run`;
+  }
+  return `${cadence} · last done ${formatRelativeTime(task.last_completed)}`;
+}
+
+function dueTaskCard(task, status) {
   return `
     <div class="feature">
       ${iconTile(icon.clock(36), { background: 'var(--orange-soft)', color: 'var(--orange-ink)' })}
@@ -855,9 +899,7 @@ function dueTaskCard(task) {
           ${priorityPill(task)}
         </div>
         ${task.description ? `<span class="feature-desc">${escapeHtml(task.description)}</span>` : ''}
-        <span class="feature-meta">${escapeHtml(scheduleLabel(task))} · last done ${escapeHtml(
-          formatRelativeDays(task.last_completed),
-        )}</span>
+        <span class="feature-meta">${escapeHtml(taskMetaLine(task, status))}</span>
       </div>
       ${button('Complete', {
         variant: 'go',
@@ -868,22 +910,14 @@ function dueTaskCard(task) {
   `;
 }
 
-function daysUntil(iso) {
-  if (!iso) return null;
-  const days = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
-  if (days <= 0) return 'today';
-  if (days === 1) return 'tomorrow';
-  return `in ${days} days`;
-}
-
-function upcomingRow(task) {
+function upcomingRow(task, status) {
   const prefix = task.priority && task.priority !== 'normal' ? `${priorityLabel(task.priority)} priority · ` : '';
   return listRow({
     leadingHtml: iconTile(icon.clock(26), { background: 'var(--fill)', color: 'var(--label-3)' }),
     title: task.name,
-    sub: `${prefix}${scheduleLabel(task)} · last done ${formatRelativeDays(task.last_completed)}`,
+    sub: `${prefix}${taskMetaLine(task, status)}`,
     trailingHtml: `<span class="pill pill-muted" style="margin-top:0">${escapeHtml(
-      daysUntil(task.next_due) ?? '—',
+      untilLabel(status.nextAt) ?? '—',
     )}</span>`,
     data: { 'data-complete-task': task.id },
   });
@@ -895,47 +929,73 @@ $('slowtask-list').addEventListener('click', (event) => {
   openTaskCompleteModal(btn.dataset.completeTask);
 });
 
+// A checkbox list rather than a dropdown, because more than one person can have
+// worked on a task and a <select> makes that a lie. Ordered by who drove most
+// recently, so the people actually in the building are at the top of the list
+// instead of whoever is first alphabetically.
 async function openTaskCompleteModal(taskId) {
   let drivers = [];
+  let recentIds = [];
   try {
-    drivers = await fetchActiveDrivers();
+    [drivers, recentIds] = await Promise.all([
+      fetchActiveDrivers(),
+      fetchRecentDriverIds().catch(() => []),
+    ]);
   } catch {
     showError('Could not load drivers. Check your connection.');
     return;
   }
 
+  const ordered = orderByRecent(drivers, recentIds);
+  const chosen = new Set();
+
   const sheet = openModal('Complete task', `
     <h2>Complete Task</h2>
-    ${field(
-      'Who completed it?',
-      'task-driver-select',
-      select({
-        id: 'task-driver-select',
-        placeholder: 'Not specified',
-        options: drivers.map((d) => ({ value: d.id, label: d.name })),
-      }),
-    )}
+    <div>
+      <span class="field-label">Who did it?</span>
+      <div class="group is-scroll" id="task-driver-list">
+        ${
+          ordered.length
+            ? ordered.map((d) => checkRow({ id: d.id, label: d.name })).join('')
+            : emptyState('No drivers on the roster yet.')
+        }
+      </div>
+      <span class="group-foot">Tap everyone who worked on it — more than one is fine, and none is allowed.</span>
+    </div>
     ${field('Notes', 'task-complete-notes', textArea({ id: 'task-complete-notes', placeholder: 'Optional' }))}
     ${modalActions('Mark Complete', 'task-complete-btn')}
   `);
 
   const btn = sheet.querySelector('#task-complete-btn');
+
+  sheet.querySelector('#task-driver-list').addEventListener('click', (event) => {
+    const row = event.target.closest('.check');
+    if (!row) return;
+    const id = row.dataset.itemId;
+    const nowChecked = row.getAttribute('aria-checked') !== 'true';
+    row.setAttribute('aria-checked', String(nowChecked));
+    if (nowChecked) chosen.add(id);
+    else chosen.delete(id);
+    btn.textContent = chosen.size ? `Mark Complete (${chosen.size})` : 'Mark Complete';
+  });
+
   btn.addEventListener('click', async () => {
+    const label = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
-      await completeSlowTask(
-        taskId,
-        sheet.querySelector('#task-driver-select').value || null,
-        sheet.querySelector('#task-complete-notes').value.trim(),
-      );
+      await completeSlowTask(taskId, [...chosen], sheet.querySelector('#task-complete-notes').value.trim());
       closeModal();
       showSuccess('Marked complete.');
       await loadSlowTasks();
     } catch (err) {
       showError(err.message || 'Could not complete this task. Try again.');
+      // The completion may well have landed even on an error — reload rather
+      // than leaving a sheet open over a board that has already moved on.
+      closeModal();
+      await loadSlowTasks();
       btn.disabled = false;
-      btn.textContent = 'Mark Complete';
+      btn.textContent = label;
     }
   });
 }

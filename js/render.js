@@ -146,6 +146,12 @@ export function dateInput({ id, value = '', min = null }) {
   return `<input${attrs({ type: 'date', id, min, value: String(value ?? '') })} />`;
 }
 
+// A native time picker. Like dateInput, `value` must already be in the format
+// the control round-trips — "HH:MM", 24-hour, whatever the display locale is.
+export function timeInput({ id, value = '', data = {} }) {
+  return `<input${attrs({ type: 'time', id, ...data, value: String(value ?? '') })} />`;
+}
+
 // A native colour well. The value must be a 6-digit hex — type="color" silently
 // falls back to #000000 for shorthand (#fff), named colours or junk, so the
 // caller normalises before rendering rather than watching a vehicle quietly

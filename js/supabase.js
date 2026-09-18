@@ -14,6 +14,9 @@ import {
   VEHICLE_STATUSES,
   SLOW_TASK_PRIORITIES,
   DEFAULT_SLOW_TASK_PRIORITY,
+  SLOW_TASK_SCHEDULES,
+  DEFAULT_SLOW_TASK_SCHEDULE,
+  INTERVAL_UNITS,
 } from './data.js';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
@@ -24,6 +27,9 @@ export {
   VEHICLE_STATUSES,
   SLOW_TASK_PRIORITIES,
   DEFAULT_SLOW_TASK_PRIORITY,
+  SLOW_TASK_SCHEDULES,
+  DEFAULT_SLOW_TASK_SCHEDULE,
+  INTERVAL_UNITS,
 };
 
 export const {
@@ -71,6 +77,7 @@ export const {
   fetchSlowTasks,
   completeSlowTask,
   fetchSlowTaskCompletions,
+  fetchSlowTaskCompletionCounts,
   fetchAllSlowTasks,
   createSlowTask,
   updateSlowTask,

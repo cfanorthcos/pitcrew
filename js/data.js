@@ -39,6 +39,26 @@ export const SLOW_TASK_PRIORITIES = [
 
 export const DEFAULT_SLOW_TASK_PRIORITY = 'normal';
 
+// The schedule column on slow_tasks, and which shape column each one needs.
+// Kept beside the data layer for the same reason VEHICLE_STATUSES is: adding a
+// schedule should mean touching one list, not hunting for every switch on it.
+export const SLOW_TASK_SCHEDULES = [
+  { value: 'interval', label: 'Repeats on a set interval', field: 'frequency_minutes' },
+  { value: 'times_of_day', label: 'At set times of day', field: 'due_times' },
+  { value: 'times_per_day', label: 'A set number of times a day', field: 'times_per_day' },
+  { value: 'once', label: 'One-time — done once and finished', field: 'next_due' },
+];
+
+export const DEFAULT_SLOW_TASK_SCHEDULE = 'interval';
+
+// The units the admin form offers for an interval task, all stored as minutes.
+export const INTERVAL_UNITS = [
+  { value: 1, label: 'minutes' },
+  { value: 60, label: 'hours' },
+  { value: 1440, label: 'days' },
+  { value: 10080, label: 'weeks' },
+];
+
 export function createDataApi(supabase) {
   // A plain `.update().eq('id', id)` with no matching RLS update policy
   // doesn't error — Postgres just matches zero rows and PostgREST reports
@@ -549,28 +569,70 @@ export function createDataApi(supabase) {
     return data;
   }
 
-  async function completeSlowTask(taskId, driverId, notes) {
-    const { error } = await supabase
+  // `driverIds` is a list because a task can be done by more than one person —
+  // two people deep-clean the bags together and both belong on the record.
+  // Empty is still allowed: "somebody did it" beats nobody logging it at all.
+  async function completeSlowTask(taskId, driverIds, notes) {
+    const { data: completion, error } = await supabase
       .from('slow_task_completions')
-      .insert({ task_id: taskId, completed_by: driverId || null, notes: notes || null });
+      .insert({ task_id: taskId, notes: notes || null })
+      .select('id')
+      .single();
     if (error) throw error;
+
+    const ids = [...new Set((Array.isArray(driverIds) ? driverIds : [driverIds]).filter(Boolean))];
+    let creditError = null;
+    if (ids.length > 0) {
+      ({ error: creditError } = await supabase
+        .from('slow_task_completion_drivers')
+        .insert(ids.map((driverId) => ({ completion_id: completion.id, driver_id: driverId }))));
+    }
 
     // Sequential, and routed through updateRowOrThrow: the old parallel version
     // reported success even when the update matched zero rows, so a task could
     // log a completion and never advance its next_due. The slow_tasks_before_write
     // trigger recomputes next_due from last_completed.
+    //
+    // Deliberately stamped even when the credits failed. The completion row is
+    // already written, so bailing out here would leave the task reading as still
+    // due and invite a second completion for work that was done once — which for
+    // a times_per_day task burns a run off the day's tally. Advance the task,
+    // then say what didn't save.
     await updateRowOrThrow('slow_tasks', taskId, { last_completed: new Date().toISOString() });
+
+    if (creditError) {
+      throw new Error(
+        "Marked complete, but who did it wasn't saved — check that the database schema is up to date.",
+      );
+    }
   }
 
   async function fetchSlowTaskCompletions(taskId, limit = HISTORY_PAGE_SIZE) {
     const { data, error } = await supabase
       .from('slow_task_completions')
-      .select('*, drivers(name)')
+      .select('*, slow_task_completion_drivers(drivers(name))')
       .eq('task_id', taskId)
       .order('completed_at', { ascending: false })
       .limit(limit);
     if (error) throw error;
     return data;
+  }
+
+  // How many times each task has been completed since `sinceIso` — the kiosk
+  // asks for "since local midnight" so a times_per_day task knows how many runs
+  // it has left in the day. Counted here rather than with a grouped query
+  // because PostgREST has no group-by, and the window is one day of one store's
+  // completions either way.
+  async function fetchSlowTaskCompletionCounts(sinceIso) {
+    const { data, error } = await supabase
+      .from('slow_task_completions')
+      .select('task_id')
+      .gte('completed_at', sinceIso);
+    if (error) throw error;
+
+    const counts = new Map();
+    for (const row of data) counts.set(row.task_id, (counts.get(row.task_id) || 0) + 1);
+    return counts;
   }
 
   // ---------------------------------------------------------------------------
@@ -586,22 +648,34 @@ export function createDataApi(supabase) {
     return data;
   }
 
-  // A repeating task carries a cadence and lets the trigger own next_due. A
-  // one-off carries a date instead, and passing frequency_days: null alongside
-  // it matters — leaving a stale cadence on a row whose repeats flag just went
-  // false trips the slow_tasks_repeats_needs_frequency check the moment somebody
-  // switches it back.
-  function slowTaskPayload({ name, description, repeats, frequency_days, priority, next_due }) {
+  // Each schedule owns exactly one shape column, and the other two are cleared
+  // rather than left behind. That matters more than it looks: a stale
+  // frequency_minutes on a row that is now times_of_day trips
+  // slow_tasks_schedule_fields the moment somebody switches it back, and a stale
+  // due_times would quietly resurrect old slots.
+  function slowTaskPayload({
+    name,
+    description,
+    schedule,
+    frequency_minutes,
+    due_times,
+    times_per_day,
+    priority,
+    next_due,
+  }) {
+    const mode = schedule || DEFAULT_SLOW_TASK_SCHEDULE;
     const payload = {
       name,
       description: description || null,
-      repeats,
-      frequency_days: repeats ? frequency_days : null,
+      schedule: mode,
+      frequency_minutes: mode === 'interval' ? frequency_minutes : null,
+      due_times: mode === 'times_of_day' ? due_times : null,
+      times_per_day: mode === 'times_per_day' ? times_per_day : null,
       priority: priority || DEFAULT_SLOW_TASK_PRIORITY,
     };
-    // Only a one-off has a date a human chose; a repeating task's next_due is
-    // the trigger's to compute, so never overwrite it from the form.
-    if (!repeats && next_due) payload.next_due = next_due;
+    // Only a one-off has a date a human chose. Every other schedule's next_due
+    // belongs to the trigger, which also nulls it for the clock-based ones.
+    if (mode === 'once' && next_due) payload.next_due = next_due;
     return payload;
   }
 
@@ -692,6 +766,7 @@ export function createDataApi(supabase) {
     fetchSlowTasks,
     completeSlowTask,
     fetchSlowTaskCompletions,
+    fetchSlowTaskCompletionCounts,
     fetchAllSlowTasks,
     createSlowTask,
     updateSlowTask,

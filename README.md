@@ -8,8 +8,8 @@ they're not listed), and their shift starts. To sign out, they tap their own
 in-use vehicle and complete the return checklist. Anyone can report a problem
 with a car straight from the board, and the report shows on the vehicle's tile
 until an admin resolves it. The board also has tabs for hot bag cleaning and
-"slow tasks" — repeating or one-off jobs, ordered by priority when several come
-due at once. An admin view (PIN-gated, asked every time it's opened)
+"slow tasks" — jobs on an interval, at set times of day, a set number of times a
+day, or one-off, ordered by priority when several come due at once. An admin view (PIN-gated, asked every time it's opened)
 gives leadership a live operations dashboard, full history, in-app
 management of drivers, hot bags, and slow tasks, and a log of customer
 complaints against specific drivers.
@@ -294,6 +294,127 @@ and no open-issue counts appear anywhere. Until steps 2–4 run, adding or editi
 a slow task fails with "That change didn't save — check that the database schema
 is up to date," and every existing task keeps behaving as a repeating one.
 
+### Seventh upgrade: sub-daily slow tasks, and more than one name per completion
+
+Replaces the `repeats` flag with a four-way `schedule`, moves cadences from days
+to minutes so a task can recur several times a day, and moves "who completed it"
+off the completion row into its own table so more than one person can be
+credited. **Requires the sixth upgrade first** — it rewrites the columns that one
+added. Safe to re-run.
+
+```sql
+-- 1. Cadences in minutes. A task that recurs every two hours cannot be
+--    expressed in days, and having two cadence columns would mean every reader
+--    checking both forever.
+alter table public.slow_tasks add column if not exists frequency_minutes integer;
+update public.slow_tasks
+  set frequency_minutes = frequency_days * 1440
+  where frequency_minutes is null and frequency_days is not null;
+
+-- 2. The four schedules, replacing the repeats boolean. Everything that repeats
+--    today is an interval task; everything else was already a one-off.
+alter table public.slow_tasks add column if not exists schedule text;
+update public.slow_tasks
+  set schedule = case when coalesce(repeats, true) then 'interval' else 'once' end
+  where schedule is null;
+alter table public.slow_tasks alter column schedule set default 'interval';
+alter table public.slow_tasks alter column schedule set not null;
+
+alter table public.slow_tasks add column if not exists due_times time[];
+alter table public.slow_tasks add column if not exists times_per_day integer;
+
+-- 3. The old constraint and column come out together: the check references
+--    repeats, so it has to go first either way.
+alter table public.slow_tasks drop constraint if exists slow_tasks_repeats_needs_frequency;
+alter table public.slow_tasks drop column if exists repeats;
+
+-- 4. The trigger, taught the four schedules. This has to happen BEFORE any
+--    further writes: PL/pgSQL binds column names at first execution, so the old
+--    body would look for the repeats column that step 3 just dropped.
+create or replace function public.slow_tasks_set_next_due()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.schedule = 'interval' then
+    if new.last_completed is null then
+      new.next_due := coalesce(new.next_due, now());
+    else
+      new.next_due := new.last_completed + make_interval(mins => new.frequency_minutes);
+    end if;
+  elsif new.schedule <> 'once' then
+    new.next_due := null;
+  end if;
+  return new;
+end;
+$$;
+
+-- 5. next_due only means something for the two schedules that have a stored
+--    instant. A clock-based task is resolved against the kiosk's local time,
+--    because "8am" means 8am in the building.
+alter table public.slow_tasks alter column next_due drop not null;
+alter table public.slow_tasks alter column next_due drop default;
+update public.slow_tasks set next_due = null where schedule in ('times_of_day', 'times_per_day');
+
+alter table public.slow_tasks drop constraint if exists slow_tasks_schedule_check;
+alter table public.slow_tasks add constraint slow_tasks_schedule_check
+  check (schedule in ('once', 'interval', 'times_of_day', 'times_per_day'));
+
+alter table public.slow_tasks drop constraint if exists slow_tasks_schedule_fields;
+alter table public.slow_tasks add constraint slow_tasks_schedule_fields check (
+  case schedule
+    when 'once' then next_due is not null
+    when 'interval' then frequency_minutes is not null
+    when 'times_of_day' then due_times is not null and array_length(due_times, 1) >= 1
+    when 'times_per_day' then times_per_day is not null
+  end
+);
+
+alter table public.slow_tasks drop column if exists frequency_days;
+
+-- 6. Who completed it, as its own table. Two people deep-clean the bags
+--    together and both belong on the record; one FK column forces somebody off.
+create table if not exists public.slow_task_completion_drivers (
+  id uuid primary key default gen_random_uuid(),
+  completion_id uuid not null references public.slow_task_completions (id) on delete cascade,
+  driver_id uuid not null references public.drivers (id) on delete restrict,
+  unique (completion_id, driver_id)
+);
+create index if not exists slow_task_completion_drivers_completion_id_idx
+  on public.slow_task_completion_drivers (completion_id);
+create index if not exists slow_task_completions_completed_at_idx
+  on public.slow_task_completions (completed_at desc);
+
+alter table public.slow_task_completion_drivers enable row level security;
+
+drop policy if exists slow_task_completion_drivers_select on public.slow_task_completion_drivers;
+create policy slow_task_completion_drivers_select
+  on public.slow_task_completion_drivers for select using (true);
+
+drop policy if exists slow_task_completion_drivers_insert on public.slow_task_completion_drivers;
+create policy slow_task_completion_drivers_insert
+  on public.slow_task_completion_drivers for insert with check (true);
+
+-- 7. Move the existing names across, then drop the column. Every completion
+--    that named somebody keeps naming them.
+insert into public.slow_task_completion_drivers (completion_id, driver_id)
+select id, completed_by from public.slow_task_completions where completed_by is not null
+on conflict do nothing;
+
+alter table public.slow_task_completions drop column if exists completed_by;
+```
+
+Run it as one block — the steps depend on each other, and the order matters:
+step 3 drops the constraint that would otherwise reject step 2's rows, and step 4
+must replace the trigger before anything writes again. If step 5's
+`slow_tasks_schedule_fields` fails, some row has a schedule without the column
+that describes it; `select id, name, schedule, frequency_minutes, due_times,
+times_per_day, next_due from public.slow_tasks;` shows which.
+
+Until this runs, the kiosk and admin both keep working on the old columns — the
+app reads `repeats`/`frequency_days` as a fallback — but saving a task fails, and
+the three new schedules are not selectable.
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -481,39 +602,80 @@ update hot_bags set active = false where name = 'Hot Bag 01'; -- retire
 Admin → **Slow Tasks** has full CRUD: "+ Add Slow Task" (name, optional
 description, schedule, priority), **Edit**, and **Deactivate/Reactivate**.
 
-**Schedule** is the choice between the two kinds of task:
+### The four schedules
 
-- **Repeats on a schedule** — the original behaviour. Set a cadence in days;
-  `next_due` is calculated automatically by a database trigger whenever the row
-  is saved with a `last_completed` value, so no one ever types a due date.
-  Editing the cadence on an already-completed task recomputes `next_due`
-  immediately from the existing `last_completed`.
-- **One-time** — set a due date instead of a cadence. Completing it finishes it
-  for good: it disappears from the kiosk on its own and reads **Completed** in
-  admin. Nobody has to remember to deactivate it. It keeps its completion
-  history like any other task.
+**Repeats on a set interval** — a cadence plus a unit (minutes / hours / days /
+weeks), stored as `frequency_minutes`. Rolls forward from each completion:
+completing an every-3-hours task at 9:00 makes it due again at 12:00. `next_due`
+is calculated by a database trigger whenever the row is saved with a
+`last_completed`, so no one ever types a due date, and editing the cadence
+recomputes it immediately from the existing `last_completed`.
 
-**Priority** is `low` / `normal` / `high`. It orders the kiosk's "Due now" list
-when several tasks land at once (high first, then whichever has been due
-longest) and shows as a pill on the card — it never changes *when* something
-becomes due. `normal` shows no pill, because a badge on every card is a badge on
-none of them. "Coming up" still reads by date, since that list is a calendar.
+**At set times of day** — a list of clock times in `due_times`, e.g. 8:00, 13:00,
+18:00. Each time is its own run. A slot that passes without being done stays
+visibly missed rather than sliding into the next one, and before the first slot
+of the day the outstanding run is yesterday's last — otherwise an evening-only
+task reads "not due" all night, which is exactly when somebody is at the board
+wondering whether it got done.
+
+**A set number of times a day** — `times_per_day`. Stays on the kiosk until it
+has been completed that many times today, so one person can check it off and get
+logged for it while leaving it available for the next person. The card shows
+"1 of 3 done today". The tally resets at local midnight and comes from counting
+`slow_task_completions`, not from a flag.
+
+**One-time** — a due date instead of a cadence. Completing it finishes it for
+good: it disappears from the kiosk on its own and reads **Completed** in admin.
+Nobody has to remember to deactivate it. It keeps its completion history like any
+other task.
+
+Clock times and the daily tally are resolved against the **kiosk's own local
+time**, not the server's. "The 8am walk" means 8am in the building, and a single
+UTC instant cannot express that — which is why `next_due` is null for those two
+schedules and the boards compute due-ness themselves.
+
+### Priority
+
+`low` / `normal` / `high`. It orders the kiosk's "Due now" list when several
+tasks land at once (high first, then whichever has been due longest) and shows as
+a pill on the card — it never changes *when* something becomes due. `normal`
+shows no pill, because a badge on every card is a badge on none of them.
+"Coming up" still reads by date, since that list is a calendar.
+
+### Who completed it
+
+The kiosk's Complete sheet is a checkbox list, not a dropdown: more than one
+person can have worked on a task, and a `<select>` makes that a lie. Everyone
+ticked is written to `slow_task_completion_drivers`, and the completion history
+in admin shows all of them. Naming nobody is still allowed — it always was.
+
+The list is ordered by who drove most recently, so the people actually in the
+building are at the top rather than whoever is first alphabetically.
 
 Equivalent SQL:
 
 ```sql
--- repeating, the default
-insert into slow_tasks (name, description, frequency_days, priority)
-  values ('Check delivery supplies', 'Restock bags, receipt paper, etc.', 14, 'high');
+-- every two hours
+insert into slow_tasks (name, schedule, frequency_minutes, priority)
+  values ('Bathroom check', 'interval', 120, 'high');
+
+-- at set times of day
+insert into slow_tasks (name, schedule, due_times, priority)
+  values ('Walk the lot', 'times_of_day', array['08:00','13:00','18:00']::time[], 'normal');
+
+-- three times a day, any time
+insert into slow_tasks (name, schedule, times_per_day)
+  values ('Wipe down the staging counter', 'times_per_day', 3);
 
 -- one-time: no cadence, a date instead
-insert into slow_tasks (name, repeats, frequency_days, priority, next_due)
-  values ('Swap the winter floor mats', false, null, 'low', now() + interval '14 days');
+insert into slow_tasks (name, schedule, priority, next_due)
+  values ('Swap the winter floor mats', 'once', 'low', now() + interval '14 days');
 ```
 
-A repeating task must have a `frequency_days` — `slow_tasks_repeats_needs_frequency`
-enforces that, because a repeating task with nothing to roll forward to would sit
-permanently due.
+Every schedule must carry the column that describes it —
+`slow_tasks_schedule_fields` enforces that, because an interval task with no
+cadence has nothing to roll forward to and would sit permanently due while
+looking like a bug in the kiosk.
 
 ## Security considerations
 

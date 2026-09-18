@@ -124,37 +124,99 @@ test('markHotBagCleaned sets last_cleaned and selects to prove a row matched', a
   assert.equal(call.single, true, 'must read a row back, or a no-op looks like success');
 });
 
-test('completeSlowTask logs the completion before advancing the task', async () => {
+test('completeSlowTask logs the completion, then who did it, then advances the task', async () => {
   const { api, calls } = setup(
     byTable({
-      slow_task_completions: { data: [] },
+      slow_task_completions: { data: { id: 'c-1' } },
+      slow_task_completion_drivers: { data: [] },
       slow_tasks: { data: { id: 'task-1' } },
     }),
   );
 
-  await api.completeSlowTask('task-1', 'driver-9', 'wiped everything down');
+  await api.completeSlowTask('task-1', ['driver-9', 'driver-4'], 'wiped everything down');
 
-  assert.deepEqual(calls.map((c) => c.table), ['slow_task_completions', 'slow_tasks']);
-  assert.equal(calls[0].payload.completed_by, 'driver-9');
+  assert.deepEqual(calls.map((c) => c.table), [
+    'slow_task_completions',
+    'slow_task_completion_drivers',
+    'slow_tasks',
+  ]);
   assert.equal(calls[0].payload.notes, 'wiped everything down');
-  assert.ok(calls[1].payload.last_completed);
+  assert.deepEqual(calls[1].payload, [
+    { completion_id: 'c-1', driver_id: 'driver-9' },
+    { completion_id: 'c-1', driver_id: 'driver-4' },
+  ]);
+  assert.ok(calls[2].payload.last_completed);
 });
 
-test('completeSlowTask stores a null driver rather than an empty string', async () => {
+test('completeSlowTask credits everyone who worked on it, not just the first name', async () => {
+  // A <select> could only ever record one person. Two drivers deep-cleaning the
+  // bags together is the case this whole table exists for.
   const { api, calls } = setup(
-    byTable({ slow_task_completions: { data: [] }, slow_tasks: { data: { id: 'task-1' } } }),
+    byTable({
+      slow_task_completions: { data: { id: 'c-1' } },
+      slow_task_completion_drivers: { data: [] },
+      slow_tasks: { data: { id: 'task-1' } },
+    }),
   );
 
-  await api.completeSlowTask('task-1', null, '');
+  await api.completeSlowTask('task-1', ['a', 'b', 'c'], '');
 
-  assert.equal(calls[0].payload.completed_by, null);
+  assert.equal(calls[1].payload.length, 3);
+});
+
+test('completeSlowTask drops blanks and duplicates from the driver list', async () => {
+  const { api, calls } = setup(
+    byTable({
+      slow_task_completions: { data: { id: 'c-1' } },
+      slow_task_completion_drivers: { data: [] },
+      slow_tasks: { data: { id: 'task-1' } },
+    }),
+  );
+
+  await api.completeSlowTask('task-1', ['a', null, 'a', '', 'b'], '');
+
+  assert.deepEqual(calls[1].payload.map((r) => r.driver_id), ['a', 'b']);
+});
+
+test('completeSlowTask with nobody named skips the credit write entirely', async () => {
+  // Logging who did it has always been optional, and an empty insert would be a
+  // round trip that can only fail.
+  const { api, calls } = setup(
+    byTable({ slow_task_completions: { data: { id: 'c-1' } }, slow_tasks: { data: { id: 'task-1' } } }),
+  );
+
+  await api.completeSlowTask('task-1', [], '');
+
+  assert.deepEqual(calls.map((c) => c.table), ['slow_task_completions', 'slow_tasks']);
   assert.equal(calls[0].payload.notes, null);
+});
+
+test('a failed credit write still advances the task, then reports itself', async () => {
+  // The completion row is already written. Bailing out before last_completed
+  // would leave the task reading as due and invite a second completion for work
+  // that was done once — which for a times_per_day task burns a run off the day.
+  const { api, calls } = setup(
+    byTable({
+      slow_task_completions: { data: { id: 'c-1' } },
+      slow_task_completion_drivers: { error: pgError('42501') },
+      slow_tasks: { data: { id: 'task-1' } },
+    }),
+  );
+
+  await assert.rejects(() => api.completeSlowTask('task-1', ['a'], ''), /schema is up to date/i);
+
+  assert.deepEqual(calls.map((c) => c.table), [
+    'slow_task_completions',
+    'slow_task_completion_drivers',
+    'slow_tasks',
+  ]);
+  assert.ok(calls[2].payload.last_completed, 'the task must still advance');
 });
 
 test('completeSlowTask does not advance the task if the completion write fails', async () => {
   const { api, calls } = setup(byTable({ slow_task_completions: { error: pgError('42501') } }));
 
-  await assert.rejects(() => api.completeSlowTask('task-1', null, null));
+  await assert.rejects(() => api.completeSlowTask('task-1', [], null));
   assert.deepEqual(calls.map((c) => c.table), ['slow_task_completions']);
 });
 
@@ -572,16 +634,16 @@ test('vehicle issue reports are never deleted — the maintenance log is history
 // ---------------------------------------------------------------------------
 // slow tasks: repeating vs one-time, and priority
 // ---------------------------------------------------------------------------
-test('a repeating task keeps its cadence and never has next_due written from the form', async () => {
-  // next_due belongs to the slow_tasks_before_write trigger for a repeating
+test('an interval task keeps its cadence and never has next_due written from the form', async () => {
+  // next_due belongs to the slow_tasks_before_write trigger for an interval
   // task. Writing it here would fight the trigger on every save.
   const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
 
   await api.createSlowTask({
     name: 'Deep clean bags',
     description: '',
-    repeats: true,
-    frequency_days: 30,
+    schedule: 'interval',
+    frequency_minutes: 43200,
     priority: 'high',
     next_due: '2026-10-01T12:00:00.000Z',
   });
@@ -589,29 +651,65 @@ test('a repeating task keeps its cadence and never has next_due written from the
   assert.deepEqual(calls[0].payload, {
     name: 'Deep clean bags',
     description: null,
-    repeats: true,
-    frequency_days: 30,
+    schedule: 'interval',
+    frequency_minutes: 43200,
+    due_times: null,
+    times_per_day: null,
     priority: 'high',
   });
 });
 
-test('a one-time task carries a due date and drops the cadence entirely', async () => {
-  // Leaving a stale frequency_days on a row whose repeats flag just went false
-  // trips slow_tasks_repeats_needs_frequency the moment somebody flips it back.
+test('switching schedule clears the shape columns the old one owned', async () => {
+  // A stale frequency_minutes on a row that is now times_of_day trips
+  // slow_tasks_schedule_fields the moment somebody switches it back, and stale
+  // due_times would quietly resurrect old slots.
+  const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
+
+  await api.updateSlowTask('t-1', {
+    name: 'Walk the lot',
+    schedule: 'times_of_day',
+    frequency_minutes: 120,
+    due_times: ['08:00', '13:00'],
+    times_per_day: 4,
+    priority: 'normal',
+  });
+
+  assert.equal(calls[0].op, 'update');
+  assert.equal(calls[0].payload.frequency_minutes, null);
+  assert.equal(calls[0].payload.times_per_day, null);
+  assert.deepEqual(calls[0].payload.due_times, ['08:00', '13:00']);
+});
+
+test('a times_per_day task stores its target and nothing else', async () => {
+  const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
+
+  await api.createSlowTask({
+    name: 'Wipe the counter',
+    schedule: 'times_per_day',
+    times_per_day: 3,
+    frequency_minutes: 60,
+    due_times: ['08:00'],
+  });
+
+  assert.equal(calls[0].payload.times_per_day, 3);
+  assert.equal(calls[0].payload.frequency_minutes, null);
+  assert.equal(calls[0].payload.due_times, null);
+});
+
+test('a one-time task carries a due date and drops every cadence column', async () => {
   const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
 
   await api.updateSlowTask('t-1', {
     name: 'Swap the floor mats',
     description: 'One-off',
-    repeats: false,
-    frequency_days: 30,
+    schedule: 'once',
+    frequency_minutes: 43200,
     priority: 'low',
     next_due: '2026-10-01T12:00:00.000Z',
   });
 
-  assert.equal(calls[0].op, 'update');
-  assert.equal(calls[0].payload.repeats, false);
-  assert.equal(calls[0].payload.frequency_days, null);
+  assert.equal(calls[0].payload.schedule, 'once');
+  assert.equal(calls[0].payload.frequency_minutes, null);
   assert.equal(calls[0].payload.next_due, '2026-10-01T12:00:00.000Z');
 });
 
@@ -620,8 +718,7 @@ test('editing a one-time task without touching the date leaves next_due alone', 
 
   await api.updateSlowTask('t-1', {
     name: 'Swap the floor mats',
-    repeats: false,
-    frequency_days: null,
+    schedule: 'once',
     priority: 'normal',
     next_due: null,
   });
@@ -629,21 +726,47 @@ test('editing a one-time task without touching the date leaves next_due alone', 
   assert.ok(!('next_due' in calls[0].payload), 'a blank date must not clear the stored due date');
 });
 
-test('a task saved with no priority still gets one', async () => {
+test('a task saved with no schedule or priority still gets both', async () => {
   const { api, calls } = setup(byTable({ slow_tasks: { data: { id: 't-1' } } }));
 
-  await api.createSlowTask({ name: 'Inspect equipment', repeats: true, frequency_days: 14 });
+  await api.createSlowTask({ name: 'Inspect equipment', frequency_minutes: 20160 });
 
+  assert.equal(calls[0].payload.schedule, 'interval');
   assert.equal(calls[0].payload.priority, 'normal');
 });
 
 test('completeSlowTask stamps last_completed and lets the trigger own next_due', async () => {
   const { api, calls } = setup(
-    byTable({ slow_task_completions: { data: [] }, slow_tasks: { data: { id: 't-1' } } }),
+    byTable({ slow_task_completions: { data: { id: 'c-1' } }, slow_tasks: { data: { id: 't-1' } } }),
   );
 
-  await api.completeSlowTask('t-1', 'd-1', 'done');
+  await api.completeSlowTask('t-1', [], 'done');
 
   assert.deepEqual(calls.map((c) => c.table), ['slow_task_completions', 'slow_tasks']);
   assert.deepEqual(Object.keys(calls[1].payload), ['last_completed']);
+});
+
+test('completion history reads the names through the join table', async () => {
+  const { api, calls } = setup(byTable({ slow_task_completions: { data: [] } }));
+
+  await api.fetchSlowTaskCompletions('t-1');
+
+  assert.match(calls[0].columns, /slow_task_completion_drivers\(drivers\(name\)\)/);
+});
+
+test("today's completion counts are tallied per task from one bounded read", async () => {
+  const { api, calls } = setup(
+    byTable({
+      slow_task_completions: {
+        data: [{ task_id: 'a' }, { task_id: 'b' }, { task_id: 'a' }],
+      },
+    }),
+  );
+
+  const counts = await api.fetchSlowTaskCompletionCounts('2026-09-18T06:00:00.000Z');
+
+  assert.equal(findFilter(calls[0], 'completed_at').type, 'gte');
+  assert.equal(counts.get('a'), 2);
+  assert.equal(counts.get('b'), 1);
+  assert.equal(counts.get('missing'), undefined);
 });

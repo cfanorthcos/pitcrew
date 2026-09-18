@@ -635,6 +635,7 @@ input[type='text'],
 input[type='number'],
 input[type='password'],
 input[type='date'],
+input[type='time'],
 select {
   width: 100%;
   min-height: 42px;
@@ -669,6 +670,19 @@ select {
   background-size: 6px 6px, 6px 6px;
   background-repeat: no-repeat;
   padding-right: 38px;
+}
+
+/* One row per clock time in the times-of-day editor: the input takes the space,
+   the remove button takes what it needs. */
+.time-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.time-row input {
+  flex: 1 1 auto;
 }
 
 input[type='color'] {
