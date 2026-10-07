@@ -32,4 +32,4 @@ export const ADMIN_PIN = '3560';
 // "Feedback to Monday" in the README). Leave empty to hide the button. Like the
 // publishable key, this ships to every browser: anyone who finds it can post a
 // feedback item, and nothing more.
-export const FEEDBACK_WEBHOOK_URL = '';
+export const FEEDBACK_WEBHOOK_URL = 'https://hooks.zapier.com/hooks/catch/10599539/4mnt30k/';
