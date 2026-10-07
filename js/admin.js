@@ -92,6 +92,7 @@ import {
   select,
   modalActions,
 } from './render.js';
+import { isFeedbackEnabled, openFeedbackModal } from './feedback.js';
 
 // ---------------------------------------------------------------------------
 // dashboard
@@ -1648,6 +1649,12 @@ document.getElementById('admin-nav').addEventListener('click', (event) => {
   const btn = event.target.closest('button[data-section]');
   if (btn) switchSection(btn.dataset.section);
 });
+
+if (isFeedbackEnabled()) {
+  const feedbackBtn = document.getElementById('side-feedback');
+  feedbackBtn.classList.remove('hidden');
+  feedbackBtn.addEventListener('click', () => openFeedbackModal({ source: 'admin' }));
+}
 
 // ---------------------------------------------------------------------------
 // PIN lock screen — casual deterrent only, not real auth (see config.js)

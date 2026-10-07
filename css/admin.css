@@ -212,6 +212,22 @@ a:hover {
   text-decoration: none;
 }
 
+/* Its own line above the clock: three items don't fit across the sidebar. */
+.side-foot:has(.side-feedback:not(.hidden)) {
+  flex-wrap: wrap;
+}
+.side-feedback {
+  order: -1;
+  flex: 1 0 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #cdc6ba;
+  cursor: pointer;
+}
+.side-feedback:hover,
 .side-foot a:hover {
   color: #fff;
 }

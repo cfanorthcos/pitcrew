@@ -225,6 +225,23 @@ button {
   font-weight: 500;
 }
 
+/* Feedback and Admin travel as one item, so the clock stays centred in the
+   space-between row whether or not feedback is switched on. */
+.k-navend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Feedback borrows the admin link's look; only the admin link pulls into the
+   right gutter. */
+button.k-adminlink {
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+  margin-right: 0;
+}
 .k-adminlink:hover {
   color: var(--label-2);
   background: var(--fill);

@@ -27,3 +27,9 @@ export const SHIFT_OVERDUE_HOURS = 12;
 // device that matters is a wall iPad whose browser session outlives everybody's
 // shift. Change it here before deploying; there's no admin UI for changing it.
 export const ADMIN_PIN = '3560';
+
+// Zapier "Catch Hook" URL for the Send Feedback button (see js/feedback.js and
+// "Feedback to Monday" in the README). Leave empty to hide the button. Like the
+// publishable key, this ships to every browser: anyone who finds it can post a
+// feedback item, and nothing more.
+export const FEEDBACK_WEBHOOK_URL = '';

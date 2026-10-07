@@ -58,6 +58,7 @@ import {
 import { icon } from './icons.js';
 import { searchDrivers, orderByRecent, findExactDriver, findConfusableDriver } from './match.js';
 import { createVersionWatcher } from './version-watch.js';
+import { isFeedbackEnabled, openFeedbackModal } from './feedback.js';
 
 const BOARD_REFRESH_MS = 20000;
 
@@ -117,7 +118,7 @@ function setChrome(view) {
   const isFlow = view.chrome === 'flow';
   $('nav-brand').classList.toggle('hidden', isFlow);
   $('nav-clock').classList.toggle('hidden', isFlow);
-  $('nav-admin').classList.toggle('hidden', isFlow);
+  $('nav-end').classList.toggle('hidden', isFlow);
   $('nav-back').classList.toggle('hidden', !isFlow);
   $('nav-context').classList.toggle('hidden', !isFlow);
   $('tab-bar').classList.toggle('hidden', isFlow);
@@ -307,6 +308,11 @@ $('vehicle-board').addEventListener('click', (event) => {
 });
 
 $('report-vehicle-btn').addEventListener('click', () => openVehicleIssueModal());
+
+if (isFeedbackEnabled()) {
+  $('nav-feedback').classList.remove('hidden');
+  $('nav-feedback').addEventListener('click', () => openFeedbackModal({ source: 'kiosk' }));
+}
 
 // Every active vehicle is offered, including the ones already out of service and
 // the ones somebody is driving right now — those are the two that most need a

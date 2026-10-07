@@ -43,6 +43,7 @@ js/kiosk-render.js    kiosk-only components (pills, icon tiles, grouped rows)
 js/icons.js           inline SVG icon set
 js/match.js           driver name matching for the kiosk identity screen
 js/version-watch.js   reloads the kiosk when a new version is deployed
+js/feedback.js        Send Feedback button → Zapier webhook → Monday board
 js/app.js             driver kiosk logic
 js/admin.js           admin dashboard logic
 tests/                node --test suite, no dependencies
@@ -676,6 +677,34 @@ Every schedule must carry the column that describes it —
 `slow_tasks_schedule_fields` enforces that, because an interval task with no
 cadence has nothing to roll forward to and would sit permanently due while
 looking like a bug in the kiosk.
+
+## Feedback to Monday
+
+A **Feedback** button sits next to Admin in the kiosk header and at the bottom
+of the admin sidebar. It asks for a type (Idea / Bug / Something else), a
+message, and an optional name, and posts them to a **Zapier Catch Hook**; a Zap
+then creates an item on the Monday feedback board. PitCrew never calls Monday
+itself, because that would mean shipping a Monday API token to every browser.
+
+The button is hidden until a webhook URL is set. To wire it up:
+
+1. In Zapier, create a Zap with trigger **Webhooks by Zapier → Catch Hook**
+   and copy the URL it gives you (`https://hooks.zapier.com/hooks/catch/…`).
+2. Paste it into `FEEDBACK_WEBHOOK_URL` in `js/config.js`, deploy, and send
+   one test feedback from the kiosk so Zapier has a sample to map.
+3. Add the action **monday.com → Create Item**, pick the board, and map the
+   fields: `message` (a good item name, or a long-text column), `type`,
+   `name`, `source` (`kiosk` or `admin`) and `submitted_at` (ISO timestamp).
+4. Turn the Zap on.
+
+The request is sent form-encoded rather than as JSON on purpose: a JSON body
+makes the browser send a CORS preflight, which a Catch Hook doesn't answer, so
+the POST would never leave the browser. Zapier splits form fields into the same
+named values either way.
+
+Like the publishable key, the webhook URL is public to anyone who loads the
+site. The worst it allows is someone posting junk feedback items; if that
+happens, add a **Filter** step to the Zap or rotate the hook URL.
 
 ## Security considerations
 
