@@ -62,15 +62,19 @@ export function chevron() {
 }
 
 // ---------------------------------------------------------------------------
-// return checklist row — Reminders-style circle, whole row tappable
+// checklist row — Reminders-style circle, whole row tappable. `sub` is the
+// closing checklist's "done at 9:42 PM" line; the return checklist has none.
 // ---------------------------------------------------------------------------
-export function checkRow({ id, label, checked = false }) {
+export function checkRow({ id, label, checked = false, sub = null }) {
   return `
     <button type="button" class="check" role="checkbox" aria-checked="${checked ? 'true' : 'false'}"${attrs({
       'data-item-id': id,
     })}>
       <span class="check-mark">${icon.check(24, '#fff')}</span>
-      <span class="check-label">${escapeHtml(label)}</span>
+      <span class="check-text">
+        <span class="check-label">${escapeHtml(label)}</span>
+        ${sub ? `<span class="check-sub">${escapeHtml(sub)}</span>` : ''}
+      </span>
     </button>
   `;
 }

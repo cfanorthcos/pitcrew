@@ -17,10 +17,6 @@ const CAR_BODY = `
   <path d="M3.6 16.5h16.8a.6.6 0 00.6-.6v-3.1c0-1-.7-1.9-1.7-2.1l-1.5-.3-1.7-3.3a2 2 0 00-1.8-1.1H9.7a2 2 0 00-1.8 1.1L6.2 10.4l-1.5.3c-1 .2-1.7 1.1-1.7 2.1v3.1c0 .3.3.6.6.6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
   <path d="M7 13.4h1.4M15.6 13.4H17" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`;
 
-const BAG_BODY = `
-  <path d="M5.6 8.5h12.8l1 11a1.4 1.4 0 01-1.4 1.5H6a1.4 1.4 0 01-1.4-1.5l1-11z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-  <path d="M8.8 8.5V6.8a3.2 3.2 0 016.4 0v1.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`;
-
 const CLOCK_BODY = `
   <circle cx="12" cy="12.6" r="8.4" stroke="currentColor" stroke-width="1.7"/>
   <path d="M12 8.2v4.6l3 1.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`;
@@ -45,7 +41,6 @@ const SLIDERS_BODY = `
 
 export const icon = {
   car: (size = 32, color) => svg(size, CAR_BODY, color),
-  bag: (size = 32, color) => svg(size, BAG_BODY, color),
   clock: (size = 32, color) => svg(size, CLOCK_BODY, color),
   warning: (size = 15, color) => svg(size, WARN_BODY, color),
   check: (size = 24, color) => svg(size, CHECK_BODY, color),

@@ -7,12 +7,14 @@ vehicle, identifies themselves (pick from the driver list, or type a name if
 they're not listed), and their shift starts. To sign out, they tap their own
 in-use vehicle and complete the return checklist. Anyone can report a problem
 with a car straight from the board, and the report shows on the vehicle's tile
-until an admin resolves it. The board also has tabs for hot bag cleaning and
-"slow tasks" — jobs on an interval, at set times of day, a set number of times a
-day, or one-off, ordered by priority when several come due at once. An admin view (PIN-gated, asked every time it's opened)
-gives leadership a live operations dashboard, full history, in-app
-management of drivers, hot bags, and slow tasks, and a log of customer
-complaints against specific drivers.
+until an admin resolves it. The board also has a **Closing** tab — the
+end-of-night checklist, ticked off as the close happens — and a "slow tasks" tab
+for jobs on an interval, at set times of day, a set number of times a day, or
+one-off, ordered by priority when several come due at once. An admin view
+(PIN-gated, asked every time it's opened) gives leadership a live operations
+dashboard, full history, in-app management of drivers, vehicles, both
+checklists and slow tasks, and a log of customer complaints against specific
+drivers.
 
 No mileage is tracked anywhere in this app — not on checkout, not on
 return, not in the database.
@@ -73,7 +75,8 @@ key must never be added to this repo or app.
 1. Open the Supabase dashboard → SQL Editor for this project.
 2. Paste the full contents of `sql/schema.sql` and run it once. This
    creates every table, the RLS policies, and seed data (3 drivers, 4
-   vehicles, 5 return-checklist items, 4 hot bags, 2 slow tasks).
+   vehicles, 5 return-checklist items, 8 closing-checklist items, 5 slow
+   tasks).
 3. Re-running the file will fail on the second run (tables/seed rows
    already exist) — it's a one-time setup script, not a repeatable
    migration. If you need to reset, drop the tables first.
@@ -194,9 +197,9 @@ create policy hot_bag_maintenance_update on public.hot_bag_maintenance
 ```
 
 Independent of the other three upgrades — it only touches
-`hot_bag_maintenance`, which `schema.sql` has always created. Until this runs,
-Resolve / Reopen fails with "That change didn't save — check that the database
-schema is up to date."
+`hot_bag_maintenance`. Hot bags have since been retired in favour of the closing
+checklist (eighth upgrade), so this only matters for querying old reports; a
+project set up from today's `schema.sql` has no hot bag tables and can skip it.
 
 ### Fifth upgrade: managing vehicles from the app
 
@@ -416,6 +419,69 @@ Until this runs, the kiosk and admin both keep working on the old columns — th
 app reads `repeats`/`frequency_days` as a fallback — but saving a task fails, and
 the three new schedules are not selectable.
 
+### Eighth upgrade: the closing checklist
+
+Adds the end-of-night checklist behind the kiosk's **Closing** tab, which
+replaces the Hot Bags tab. Safe to re-run, and independent of the other seven.
+
+```sql
+create table if not exists public.closing_items (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  sort_order integer not null default 0,
+  active boolean not null default true
+);
+
+create table if not exists public.closing_checks (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references public.closing_items (id) on delete restrict,
+  close_date date not null,
+  checked boolean not null default true,
+  checked_at timestamptz,
+  unique (item_id, close_date)
+);
+create index if not exists closing_checks_close_date_idx
+  on public.closing_checks (close_date desc);
+
+alter table public.closing_items enable row level security;
+alter table public.closing_checks enable row level security;
+
+drop policy if exists closing_items_select on public.closing_items;
+create policy closing_items_select on public.closing_items for select using (true);
+drop policy if exists closing_items_insert on public.closing_items;
+create policy closing_items_insert on public.closing_items for insert with check (true);
+drop policy if exists closing_items_update on public.closing_items;
+create policy closing_items_update on public.closing_items for update using (true) with check (true);
+
+drop policy if exists closing_checks_select on public.closing_checks;
+create policy closing_checks_select on public.closing_checks for select using (true);
+drop policy if exists closing_checks_insert on public.closing_checks;
+create policy closing_checks_insert on public.closing_checks for insert with check (true);
+drop policy if exists closing_checks_update on public.closing_checks;
+create policy closing_checks_update on public.closing_checks for update using (true) with check (true);
+
+-- A starting list, only if there isn't one yet. Edit it in Admin -> Closing Checklist.
+insert into public.closing_items (label, sort_order)
+select label, sort_order from (values
+  ('Clean and sanitize every hot bag, and leave them open to dry', 1),
+  ('Every vehicle returned and signed out in PitCrew', 2),
+  ('Trash cleared out of every vehicle', 3),
+  ('Vehicles locked, windows up, lights off', 4),
+  ('Keys hung back on the key board', 5),
+  ('Delivery phones and chargers plugged in', 6),
+  ('Delivery staging area wiped down and cleared', 7),
+  ('Any vehicle problem from tonight reported on the board', 8)
+) as seed (label, sort_order)
+where not exists (select 1 from public.closing_items);
+```
+
+Until this runs, the Closing tab says "Could not load the closing checklist" and
+the dashboard's closing tile reads 0/0; everything else keeps working.
+
+The `hot_bags` and `hot_bag_maintenance` tables are left exactly as they were.
+Nothing in the app reads or writes them any more, but their history is still
+there to query, and nothing here drops them.
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -438,7 +504,7 @@ No dependencies and no install step — this uses Node's built-in test runner
 (Node 18+). `package.json` exists only to mark the project as ESM and to hold
 that one script; nothing is bundled and nothing is downloaded.
 
-The suite covers `js/ui.js` and the write paths in `js/data.js`. Every case
+The suite covers `js/ui.js` and the read and write paths in `js/data.js`. Every case
 corresponds to a bug found in the August 2026 review, so they're regression
 tests rather than coverage for its own sake — the escaping tests in particular
 pin down a stored-XSS hole that shipped once already.
@@ -561,7 +627,7 @@ Every active vehicle is offered, including ones currently checked out.
 An open report shows as a red flag on that vehicle's kiosk tile, as an **Open
 Issues** count on the admin Vehicles table, and as a dashboard tile. Admin →
 **Vehicles** → *Reported Issues* has **Resolve / Reopen** on each row, the same
-shape as hot bag maintenance and driver incidents: it sets `status`, stamps or
+shape as driver incidents: it sets `status`, stamps or
 clears `resolved_at`, and never deletes the report.
 
 Reporting deliberately does **not** change `vehicles.status`. A driver reporting
@@ -578,24 +644,48 @@ update vehicles set status = 'out_of_service' where name = 'Blue Car';
 update vehicles set active = false where name = 'Old Van'; -- soft-remove
 ```
 
-## How to change hot bags
+## How to change the closing checklist
 
-Admin → **Hot Bags** has full CRUD: "+ Add Hot Bag" (name + cleaning
-window in days), **Edit**, and **Deactivate/Reactivate**. The Maintenance
-History table below it has **Resolve / Reopen** on each reported issue, which
-sets `status` and stamps or clears `resolved_at` — the same shape as driver
-incidents. Resolving is what clears an issue out of the dashboard's open-issue
-count; it never deletes the report, so the maintenance log stays complete. The cleaning
-window is per-bag — each bag has its own "needs cleaning after N days"
-(`clean_window_days`), so a high-volume bag can be set stricter than a
-spare. `HOT_BAG_CLEAN_WINDOW_DAYS` in `js/config.js` is only the prefill
-default when adding a new bag, not a global rule anymore.
+Admin → **Closing Checklist** controls the end-of-night list on the kiosk's
+**Closing** tab. Editing works exactly like the return checklist: "+ Add Item",
+**Edit**, **↑ / ↓** and **Retire / Restore**, and retiring never deletes.
+
+On the kiosk, **every tap saves on its own** — there's no submit button. That
+lets the close be split between whoever is still in the building, and means
+nothing is lost when the idle timer sends the screen back to the vehicle board
+half way through. Tapping a ticked item unticks it (stored as `checked = false`,
+not a delete). Each ticked item shows the time it was done.
+
+**The list starts fresh at 4am, not midnight.** A close that runs to 12:30am is
+still that night's close; resetting at midnight would wipe half-finished ticks
+off the screen in front of whoever is doing them. The hour is
+`CLOSING_DAY_STARTS_AT_HOUR` in `js/config.js`. Each tick is stored against the
+kiosk's local business date (`closing_checks.close_date`), not a UTC day.
+
+The tab badge stays hidden until the first item of the night is ticked, then
+counts what's left. A badge reading "8" from breakfast onward would just teach
+everyone to ignore it.
+
+Below the item list, **Recent Closes** shows the last 30 nights: whether the
+close was finished, when the last item was ticked, and which items weren't. A
+night where nobody touched the list shows as **Not done** rather than being
+missing. Nights are measured against *today's* active items, so an item added
+this week reads as missed on nights before it existed.
+
+Hot bags used to have their own tab, with per-bag cleaning windows. That's now
+a single closing item. The old `hot_bags` tables are still in an
+existing database, untouched, but nothing in the app uses them.
 
 Equivalent SQL:
 
 ```sql
-insert into hot_bags (name, clean_window_days) values ('Hot Bag 05', 7);
-update hot_bags set active = false where name = 'Hot Bag 01'; -- retire
+insert into closing_items (label, sort_order) values ('Lock the delivery door', 9);
+update closing_items set active = false where label = 'Old item'; -- retire
+
+-- who closed what, last night
+select i.label, c.checked, c.checked_at
+from closing_checks c join closing_items i on i.id = c.item_id
+where c.close_date = current_date - 1 order by i.sort_order;
 ```
 
 ## How to add or edit slow tasks
@@ -716,12 +806,12 @@ exactly the operations each screen needs (see the comments in
 `sql/schema.sql`) rather than to "this belongs to this user." Concretely:
 
 - No table allows `delete` from the client — history is permanent.
-  "Deactivating" a driver/hot bag/slow task is always an `update` setting
-  `active = false`, never a row delete.
+  "Deactivating" a driver/vehicle/slow task or retiring a checklist item is
+  always an `update` setting `active = false`, never a row delete.
 - **Every table the app writes is now reachable by anyone with the
   publishable key**, whether or not they ever open `admin.html`: drivers,
-  **vehicles**, hot bags, slow tasks, return-checklist items, sessions,
-  hot bag **and vehicle** maintenance reports, completions, and driver
+  **vehicles**, slow tasks, return- and closing-checklist items, closing
+  ticks, sessions, vehicle maintenance reports, completions, and driver
   incidents. Vehicles were the
   last read-only table and stopped being one when admin got vehicle CRUD —
   which means the kiosk board's contents are now writable with the same key
@@ -735,7 +825,7 @@ exactly the operations each screen needs (see the comments in
   and doesn't stop someone from calling the Supabase REST API directly
   with the same key. Driver names are now unique case-insensitively at the
   database level (`drivers_name_unique`), but there's still no dedup on
-  hot-bag or slow-task names and no rate limiting anywhere. Accepted for V1
+  slow-task or checklist names and no rate limiting anywhere. Accepted for V1
   alongside the other unauthenticated-kiosk risks below — reconsider if it
   gets abused in practice, and see "Adding authentication later" for the
   real fix. The PIN is asked **every time** `admin.html` loads — it used to be
@@ -743,8 +833,7 @@ exactly the operations each screen needs (see the comments in
   (whose session outlives everybody's shift) meant it was asked once and then
   effectively never again.
 - **Anything a driver types is rendered in the admin's browser.** Because
-  the kiosk can create driver rows and file hot-bag and vehicle issues with
-  no login,
+  the kiosk can create driver rows and file vehicle issues with no login,
   free-text fields are an untrusted-input path from the public kiosk into
   the admin screens. All interpolation goes through `escapeHtml` in
   `js/ui.js`, which escapes quotes as well as angle brackets — the earlier
@@ -754,7 +843,7 @@ exactly the operations each screen needs (see the comments in
   `escapeHtml`; never drop raw column values into markup.
 - Anyone with the publishable key and the deployed URL could, in
   principle, call the same insert/update operations the kiosk and admin
-  screens use (check out a vehicle, mark a bag cleaned, complete a task).
+  screens use (check out a vehicle, tick a closing item, complete a task).
   That's an accepted risk for an internal, unauthenticated kiosk on
   physical hardware — it is **not** safe to treat this key as secret
   beyond that context.

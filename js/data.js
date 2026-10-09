@@ -260,8 +260,7 @@ export function createDataApi(supabase) {
   // ---------------------------------------------------------------------------
   // vehicle maintenance reports
   //
-  // Mirrors the hot bag maintenance log exactly: the kiosk files a report, admin
-  // resolves it, nothing is ever deleted. Kept separate from vehicles.status on
+  // The kiosk files a report, admin resolves it, nothing is ever deleted. Kept separate from vehicles.status on
   // purpose — a driver reporting "dirty" should not take a car off the road, and
   // an admin taking a car off the road should not silently close the report that
   // prompted it.
@@ -380,60 +379,69 @@ export function createDataApi(supabase) {
     return data;
   }
 
-  async function fetchChecklistItems() {
-    const { data, error } = await supabase
-      .from('checklist_items')
-      .select('*')
-      .eq('active', true)
-      .order('sort_order');
-    if (error) throw error;
-    return data;
-  }
-
   // ---------------------------------------------------------------------------
-  // admin: return-checklist items CRUD
+  // ordered item lists: the return checklist and the closing checklist
   //
-  // These used to be SQL-only reference data. They're the questions every driver
-  // answers at the end of every shift, so leadership needs to change them without
-  // a developer. Never deleted — deactivating keeps historical
-  // driving_session_checklist_items rows pointing at a real label.
+  // Both are the same shape — a label, a position, a retire flag — and both are
+  // edited from admin, so they share one implementation over two tables. They
+  // used to be SQL-only reference data; they're the questions somebody answers
+  // every shift or every night, so leadership needs to change them without a
+  // developer. Never deleted — retiring keeps historical tick rows pointing at a
+  // real label.
   // ---------------------------------------------------------------------------
-  async function fetchAllChecklistItems() {
-    const { data, error } = await supabase
-      .from('checklist_items')
-      .select('*')
-      .order('active', { ascending: false })
-      .order('sort_order');
-    if (error) throw error;
-    return data;
+  function itemListApi(table) {
+    return {
+      async fetchActive() {
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .eq('active', true)
+          .order('sort_order');
+        if (error) throw error;
+        return data;
+      },
+
+      async fetchAll() {
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .order('active', { ascending: false })
+          .order('sort_order');
+        if (error) throw error;
+        return data;
+      },
+
+      async create(label, sortOrder) {
+        const { data, error } = await supabase
+          .from(table)
+          .insert({ label, sort_order: sortOrder })
+          .select('*')
+          .single();
+        if (error) throw error;
+        return data;
+      },
+
+      async update(id, { label }) {
+        await updateRowOrThrow(table, id, { label });
+      },
+
+      async setActive(id, active) {
+        await updateRowOrThrow(table, id, { active });
+      },
+
+      // Takes the full desired order and rewrites sort_order as 1..n. Swapping a
+      // pair would be fewer writes, but it silently does nothing when two rows
+      // share a sort_order — renumbering can't drift.
+      async reorder(orderedIds) {
+        for (const [index, id] of orderedIds.entries()) {
+          await updateRowOrThrow(table, id, { sort_order: index + 1 });
+        }
+      },
+    };
   }
 
-  async function createChecklistItem(label, sortOrder) {
-    const { data, error } = await supabase
-      .from('checklist_items')
-      .insert({ label, sort_order: sortOrder })
-      .select('*')
-      .single();
-    if (error) throw error;
-    return data;
-  }
-
-  async function updateChecklistItem(id, { label }) {
-    await updateRowOrThrow('checklist_items', id, { label });
-  }
-
-  async function setChecklistItemActive(id, active) {
-    await updateRowOrThrow('checklist_items', id, { active });
-  }
-
-  // Takes the full desired order and rewrites sort_order as 1..n. Swapping a
-  // pair would be fewer writes, but it silently does nothing when two rows share
-  // a sort_order — renumbering can't drift.
-  async function reorderChecklistItems(orderedIds) {
-    for (const [index, id] of orderedIds.entries()) {
-      await updateRowOrThrow('checklist_items', id, { sort_order: index + 1 });
-    }
-  }
+  const returnItems = itemListApi('checklist_items');
+  const closingItems = itemListApi('closing_items');
 
   async function returnVehicle(sessionId, itemIds, notes) {
     // These used to run in parallel, which meant a lost race (someone else closed
@@ -470,90 +478,49 @@ export function createDataApi(supabase) {
   }
 
   // ---------------------------------------------------------------------------
-  // hot bags
+  // closing checklist ticks
+  //
+  // One row per item per night, written the moment it is tapped, so a close can
+  // be split between whoever is still in the building and survive the kiosk
+  // wandering back to the vehicle board half way through. `closeDate` is the
+  // kiosk's local business date (see closingDate in ui.js), not a UTC day.
   // ---------------------------------------------------------------------------
-  async function fetchHotBags() {
+  async function fetchClosingChecks(closeDate) {
     const { data, error } = await supabase
-      .from('hot_bags')
-      .select('*')
-      .eq('active', true)
-      .order('name');
+      .from('closing_checks')
+      .select('item_id, checked, checked_at')
+      .eq('close_date', closeDate);
     if (error) throw error;
     return data;
   }
 
-  async function markHotBagCleaned(bagId) {
-    await updateRowOrThrow('hot_bags', bagId, { last_cleaned: new Date().toISOString() });
-  }
-
-  async function reportHotBagIssue(bagId, issue, notes) {
-    const { error } = await supabase
-      .from('hot_bag_maintenance')
-      .insert({ bag_id: bagId, issue, notes: notes || null });
+  // An upsert on (item_id, close_date) rather than insert-then-delete: no table
+  // here allows a client delete, and unticking has to be as cheap as ticking
+  // when somebody taps the wrong row. checked_at is cleared on an untick so it
+  // only ever answers "when was this done".
+  async function setClosingItemChecked(itemId, closeDate, checked) {
+    const { error } = await supabase.from('closing_checks').upsert(
+      {
+        item_id: itemId,
+        close_date: closeDate,
+        checked,
+        checked_at: checked ? new Date().toISOString() : null,
+      },
+      { onConflict: 'item_id,close_date' },
+    );
     if (error) throw error;
   }
 
-  // Resolving is an update, never a delete: the maintenance log is history.
-  // Mirrors setDriverIncidentStatus — same open/resolved pair, same nulling of
-  // the timestamp on reopen so a reopened issue doesn't keep a stale
-  // resolved_at.
-  async function setHotBagIssueStatus(id, resolved) {
-    await updateRowOrThrow('hot_bag_maintenance', id, {
-      status: resolved ? 'resolved' : 'open',
-      resolved_at: resolved ? new Date().toISOString() : null,
-    });
-  }
-
-  // Counterpart to fetchOpenDriverIncidents, for the dashboard tile and the
-  // per-bag Open Issues column. Same trap, same fix.
-  async function fetchOpenHotBagIssues() {
+  // Every tick since `sinceDate`, newest night first. Bounded by date rather
+  // than row count so a night is never cut in half at the edge of the page.
+  async function fetchClosingHistory(sinceDate) {
     const { data, error } = await supabase
-      .from('hot_bag_maintenance')
-      .select('id, bag_id')
-      .eq('status', 'open');
+      .from('closing_checks')
+      .select('item_id, close_date, checked, checked_at')
+      .gte('close_date', sinceDate)
+      .order('close_date', { ascending: false });
     if (error) throw error;
     return data;
-  }
-
-  async function fetchHotBagMaintenanceHistory(limit = HISTORY_PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from('hot_bag_maintenance')
-      .select('*, hot_bags(name)')
-      .order('submitted_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return data;
-  }
-
-  // ---------------------------------------------------------------------------
-  // admin: hot bags CRUD
-  // ---------------------------------------------------------------------------
-  async function fetchAllHotBags() {
-    const { data, error } = await supabase
-      .from('hot_bags')
-      .select('*')
-      .order('active', { ascending: false })
-      .order('name');
-    if (error) throw error;
-    return data;
-  }
-
-  async function createHotBag(name, cleanWindowDays) {
-    const { data, error } = await supabase
-      .from('hot_bags')
-      .insert({ name, clean_window_days: cleanWindowDays })
-      .select('*')
-      .single();
-    if (error) throw error;
-    return data;
-  }
-
-  async function updateHotBag(id, { name, clean_window_days }) {
-    await updateRowOrThrow('hot_bags', id, { name, clean_window_days });
-  }
-
-  async function setHotBagActive(id, active) {
-    await updateRowOrThrow('hot_bags', id, { active });
   }
 
   // ---------------------------------------------------------------------------
@@ -746,23 +713,22 @@ export function createDataApi(supabase) {
     forceCloseSession,
     fetchOpenSessions,
     fetchRecentDriverIds,
-    fetchChecklistItems,
-    fetchAllChecklistItems,
-    createChecklistItem,
-    updateChecklistItem,
-    setChecklistItemActive,
-    reorderChecklistItems,
+    fetchChecklistItems: returnItems.fetchActive,
+    fetchAllChecklistItems: returnItems.fetchAll,
+    createChecklistItem: returnItems.create,
+    updateChecklistItem: returnItems.update,
+    setChecklistItemActive: returnItems.setActive,
+    reorderChecklistItems: returnItems.reorder,
     returnVehicle,
-    fetchHotBags,
-    markHotBagCleaned,
-    reportHotBagIssue,
-    setHotBagIssueStatus,
-    fetchHotBagMaintenanceHistory,
-    fetchOpenHotBagIssues,
-    fetchAllHotBags,
-    createHotBag,
-    updateHotBag,
-    setHotBagActive,
+    fetchClosingItems: closingItems.fetchActive,
+    fetchAllClosingItems: closingItems.fetchAll,
+    createClosingItem: closingItems.create,
+    updateClosingItem: closingItems.update,
+    setClosingItemActive: closingItems.setActive,
+    reorderClosingItems: closingItems.reorder,
+    fetchClosingChecks,
+    setClosingItemChecked,
+    fetchClosingHistory,
     fetchSlowTasks,
     completeSlowTask,
     fetchSlowTaskCompletions,

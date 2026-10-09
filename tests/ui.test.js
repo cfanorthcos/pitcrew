@@ -11,7 +11,9 @@ import {
   formatElapsed,
   formatRelativeDays,
   frequencyLabel,
-  isNeedsCleaning,
+  closingDate,
+  shiftCloseDate,
+  formatCloseDate,
   isTaskDue,
   isTaskFinished,
   scheduleLabel,
@@ -149,22 +151,42 @@ test('isShiftOverdue treats a missing start time as not overdue', () => {
 });
 
 // ---------------------------------------------------------------------------
-// isNeedsCleaning
+// closing checklist dates
 // ---------------------------------------------------------------------------
-test('isNeedsCleaning respects each bag its own window', () => {
-  const cleaned = ago(8 * DAY);
-  assert.equal(isNeedsCleaning({ last_cleaned: cleaned, clean_window_days: 7 }), true);
-  assert.equal(isNeedsCleaning({ last_cleaned: cleaned, clean_window_days: 14 }), false);
+test('closingDate is the local calendar date during the evening', () => {
+  assert.equal(closingDate(new Date(2026, 9, 9, 21, 30), 4), '2026-10-09');
+  // 11pm is past midnight UTC for every US store; it must not roll over.
+  assert.equal(closingDate(new Date(2026, 9, 9, 23, 59), 4), '2026-10-09');
 });
 
-test('isNeedsCleaning flags a bag that has never been cleaned', () => {
-  assert.equal(isNeedsCleaning({ last_cleaned: null, clean_window_days: 30 }), true);
+test('closingDate keeps a close that runs past midnight on the same night', () => {
+  assert.equal(closingDate(new Date(2026, 9, 10, 0, 30), 4), '2026-10-09');
+  assert.equal(closingDate(new Date(2026, 9, 10, 3, 59), 4), '2026-10-09');
+  assert.equal(closingDate(new Date(2026, 9, 10, 4, 0), 4), '2026-10-10');
 });
 
-test('isNeedsCleaning falls back to the configured default window', () => {
-  // Covers a bag row predating the clean_window_days column.
-  assert.equal(isNeedsCleaning({ last_cleaned: ago(9 * DAY) }), true);
-  assert.equal(isNeedsCleaning({ last_cleaned: ago(2 * DAY) }), false);
+test('closingDate rolls back across a month and a year boundary', () => {
+  assert.equal(closingDate(new Date(2026, 10, 1, 1, 0), 4), '2026-10-31');
+  assert.equal(closingDate(new Date(2027, 0, 1, 2, 0), 4), '2026-12-31');
+});
+
+test('shiftCloseDate moves by calendar day, across months and DST', () => {
+  assert.equal(shiftCloseDate('2026-10-01', -1), '2026-09-30');
+  assert.equal(shiftCloseDate('2026-12-31', 1), '2027-01-01');
+  // US DST ends 2026-11-01; subtracting 24h there would land an hour off.
+  assert.equal(shiftCloseDate('2026-11-02', -1), '2026-11-01');
+  assert.equal(shiftCloseDate('2026-11-01', -1), '2026-10-31');
+  assert.equal(shiftCloseDate('2026-10-09', -29), '2026-09-10');
+});
+
+test('formatCloseDate reads the date as local, not UTC midnight', () => {
+  const expected = new Date(2026, 9, 9).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+  assert.equal(formatCloseDate('2026-10-09'), expected);
+  assert.equal(formatCloseDate('nonsense'), '—');
 });
 
 // ---------------------------------------------------------------------------

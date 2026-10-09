@@ -5,10 +5,11 @@
 export const SUPABASE_URL = 'https://rtxswisramlgnwbfggzu.supabase.co';
 export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_FxAis5fQyiSWWcP-fgLMDw_4_DUzP7w';
 
-// Default "needs cleaning after N days" for a newly-added hot bag. Each bag
-// stores its own clean_window_days in the database and can be tuned
-// individually from the admin Hot Bags screen; this is just the prefill.
-export const HOT_BAG_CLEAN_WINDOW_DAYS = 7;
+// The hour the closing checklist starts a fresh night. Not midnight: a close
+// that runs to 12:30am is still that night's close, and resetting at midnight
+// would wipe half-finished ticks off the screen in front of whoever is doing it.
+// Ticks made before this hour count toward the previous day.
+export const CLOSING_DAY_STARTS_AT_HOUR = 4;
 
 // A shift still open after this many hours is treated as "the driver forgot to
 // sign out" and flagged on both boards. It is only ever a flag: nothing closes

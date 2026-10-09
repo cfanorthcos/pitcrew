@@ -106,24 +106,6 @@ test('returnVehicle skips the checklist write when nothing was checked', async (
 // ---------------------------------------------------------------------------
 // zero-row updates reported as success
 // ---------------------------------------------------------------------------
-test('markHotBagCleaned surfaces a missing RLS policy as a real error', async () => {
-  // PGRST116 is what .single() returns when the update matched no rows.
-  const { api } = setup(byTable({ hot_bags: { error: pgError('PGRST116') } }));
-
-  await assert.rejects(() => api.markHotBagCleaned('bag-1'), /schema is up to date/i);
-});
-
-test('markHotBagCleaned sets last_cleaned and selects to prove a row matched', async () => {
-  const { api, calls } = setup(byTable({ hot_bags: { data: { id: 'bag-1' } } }));
-
-  await api.markHotBagCleaned('bag-1');
-
-  const [call] = calls;
-  assert.equal(call.op, 'update');
-  assert.ok(call.payload.last_cleaned);
-  assert.equal(call.single, true, 'must read a row back, or a no-op looks like success');
-});
-
 test('completeSlowTask logs the completion, then who did it, then advances the task', async () => {
   const { api, calls } = setup(
     byTable({
@@ -370,56 +352,105 @@ test('fetchDriverHistory is bounded and newest-first', async () => {
   assert.equal(order.options.ascending, false);
 });
 
-test('setHotBagIssueStatus resolves an issue and stamps resolved_at', async () => {
-  // The table shipped with a status column, a resolved_at column and a
-  // dashboard counting open issues, but no way to ever close one — so every
-  // reported issue stayed open forever.
-  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: { id: 'm-1' } } }));
+// ---------------------------------------------------------------------------
+// closing checklist
+// ---------------------------------------------------------------------------
+test('the closing list is its own table, not the return checklist', async () => {
+  // The two editors share one implementation; a slip in the table name would
+  // put closing items in front of drivers signing out of a car.
+  const { api, calls } = setup(byTable({ closing_items: { data: [] } }));
 
-  await api.setHotBagIssueStatus('m-1', true);
+  await api.fetchClosingItems();
+  await api.fetchAllClosingItems();
 
-  assert.equal(calls[0].table, 'hot_bag_maintenance');
-  assert.equal(calls[0].op, 'update');
-  assert.equal(calls[0].payload.status, 'resolved');
-  assert.ok(calls[0].payload.resolved_at, 'resolved_at should be set');
-  assert.equal(findFilter(calls[0], 'id').value, 'm-1');
+  assert.deepEqual(
+    calls.map((c) => c.table),
+    ['closing_items', 'closing_items'],
+  );
+  assert.deepEqual(findFilter(calls[0], 'active'), { type: 'eq', column: 'active', value: true });
+  assert.equal(findFilter(calls[1], 'active'), undefined, 'admin needs retired items too');
 });
 
-test('setHotBagIssueStatus clears resolved_at when an issue is reopened', async () => {
-  // A stale resolved_at on an open row would make the two columns disagree.
-  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: { id: 'm-1' } } }));
+test('closing items retire and reorder like the return checklist', async () => {
+  const { api, calls } = setup(byTable({ closing_items: { data: { id: 'x' } } }));
 
-  await api.setHotBagIssueStatus('m-1', false);
+  await api.setClosingItemActive('c-1', false);
+  await api.reorderClosingItems(['c-2', 'c-1']);
 
-  assert.equal(calls[0].payload.status, 'open');
-  assert.equal(calls[0].payload.resolved_at, null);
-});
-
-test('setHotBagIssueStatus surfaces a missing write policy instead of silently passing', async () => {
-  // hot_bag_maintenance had select/insert but no update policy, so this
-  // resolved to zero matched rows and PostgREST called it a success.
-  const { api } = setup(byTable({ hot_bag_maintenance: { error: pgError('PGRST116') } }));
-
-  await assert.rejects(() => api.setHotBagIssueStatus('m-1', true), /schema is up to date/i);
-});
-
-test('setHotBagIssueStatus never deletes the maintenance row', async () => {
-  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: { id: 'm-1' } } }));
-
-  await api.setHotBagIssueStatus('m-1', true);
-
-  assert.ok(
-    calls.every((c) => c.op !== 'delete'),
-    'the maintenance log is history and must never be deleted',
+  assert.ok(calls.every((c) => c.table === 'closing_items' && c.op === 'update'));
+  assert.equal(calls[0].payload.active, false);
+  assert.deepEqual(
+    calls.slice(1).map((c) => [findFilter(c, 'id').value, c.payload.sort_order]),
+    [
+      ['c-2', 1],
+      ['c-1', 2],
+    ],
   );
 });
 
-test('fetchHotBagMaintenanceHistory accepts a caller-supplied bound', async () => {
-  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: [] } }));
+test('closing item writes surface a missing RLS policy instead of silently passing', async () => {
+  const { api } = setup(byTable({ closing_items: { error: pgError('PGRST116') } }));
 
-  await api.fetchHotBagMaintenanceHistory(25);
+  await assert.rejects(() => api.updateClosingItem('c-1', { label: 'x' }), /schema is up to date/i);
+});
 
-  assert.equal(calls[0].modifiers.find((m) => m.type === 'limit').count, 25);
+test('a closing tick is an upsert on the item and the night, stamped with when', async () => {
+  const { api, calls } = setup(byTable({ closing_checks: { data: null } }));
+
+  await api.setClosingItemChecked('c-1', '2026-10-09', true);
+
+  const [call] = calls;
+  assert.equal(call.op, 'upsert');
+  assert.equal(call.options.onConflict, 'item_id,close_date');
+  assert.notEqual(call.options.ignoreDuplicates, true, 'a re-tick after an untick must overwrite');
+  assert.equal(call.payload.item_id, 'c-1');
+  assert.equal(call.payload.close_date, '2026-10-09');
+  assert.equal(call.payload.checked, true);
+  assert.ok(call.payload.checked_at);
+});
+
+test('unticking writes checked = false and clears the time, never a delete', async () => {
+  const { api, calls } = setup(byTable({ closing_checks: { data: null } }));
+
+  await api.setClosingItemChecked('c-1', '2026-10-09', false);
+
+  assert.equal(calls[0].op, 'upsert');
+  assert.equal(calls[0].payload.checked, false);
+  assert.equal(calls[0].payload.checked_at, null);
+});
+
+test('a failed closing tick is reported, not swallowed', async () => {
+  const { api } = setup(byTable({ closing_checks: { error: pgError('42501') } }));
+
+  await assert.rejects(() => api.setClosingItemChecked('c-1', '2026-10-09', true));
+});
+
+test("tonight's ticks are read for one close date only", async () => {
+  const { api, calls } = setup(byTable({ closing_checks: { data: [] } }));
+
+  await api.fetchClosingChecks('2026-10-09');
+
+  assert.deepEqual(findFilter(calls[0], 'close_date'), {
+    type: 'eq',
+    column: 'close_date',
+    value: '2026-10-09',
+  });
+});
+
+test('closing history is bounded by date, newest night first', async () => {
+  const { api, calls } = setup(byTable({ closing_checks: { data: [] } }));
+
+  await api.fetchClosingHistory('2026-09-10');
+
+  const [call] = calls;
+  assert.deepEqual(findFilter(call, 'close_date'), {
+    type: 'gte',
+    column: 'close_date',
+    value: '2026-09-10',
+  });
+  const order = call.modifiers.find((m) => m.type === 'order');
+  assert.equal(order.column, 'close_date');
+  assert.equal(order.options.ascending, false);
 });
 
 // ---------------------------------------------------------------------------
@@ -476,31 +507,18 @@ test('fetchOpenDriverIncidents filters on status rather than capping', async () 
   );
 });
 
-test('fetchOpenHotBagIssues filters on status rather than capping', async () => {
-  const { api, calls } = setup(byTable({ hot_bag_maintenance: { data: [] } }));
-
-  await api.fetchOpenHotBagIssues();
-
-  assert.equal(findFilter(calls[0], 'status').value, 'open');
-  assert.equal(
-    calls[0].modifiers.find((m) => m.type === 'limit'),
-    undefined,
-    'a bound here would undercount open issues',
-  );
-});
-
 test('the open-row reads select only what the counts need', async () => {
   // These run on the dashboard's first paint; there is no reason to pull the
   // full row (including free-text complaint details) just to count it.
   const { api, calls } = setup(
-    byTable({ driver_incidents: { data: [] }, hot_bag_maintenance: { data: [] } }),
+    byTable({ driver_incidents: { data: [] }, vehicle_maintenance: { data: [] } }),
   );
 
   await api.fetchOpenDriverIncidents();
-  await api.fetchOpenHotBagIssues();
+  await api.fetchOpenVehicleIssues();
 
   assert.equal(calls[0].columns, 'id, driver_id');
-  assert.equal(calls[1].columns, 'id, bag_id');
+  assert.equal(calls[1].columns, 'id, vehicle_id');
 });
 
 // ---------------------------------------------------------------------------

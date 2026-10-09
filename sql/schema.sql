@@ -38,8 +38,7 @@ create table public.vehicles (
 
 -- Issues drivers report against a vehicle from the kiosk. Deliberately separate
 -- from vehicles.status: status is the operator's decision about whether the car
--- is drivable, this is the raw report that leads to that decision. Same shape as
--- hot_bag_maintenance so both logs resolve and read identically.
+-- is drivable, this is the raw report that leads to that decision.
 create table public.vehicle_maintenance (
   id uuid primary key default gen_random_uuid(),
   vehicle_id uuid not null references public.vehicles (id) on delete restrict,
@@ -103,35 +102,32 @@ create index driving_session_checklist_items_session_id_idx
   on public.driving_session_checklist_items (session_id);
 
 -- ---------------------------------------------------------------------------
--- hot_bags
+-- closing checklist: the end-of-night list on the kiosk Closing tab.
+--
+-- closing_items is the same shape as checklist_items and is edited from admin
+-- the same way. closing_checks holds one row per item per night, written the
+-- moment somebody taps it, so the close can be shared between whoever is still
+-- in the building. close_date is the kiosk's local business date — a tick at
+-- 12:30am belongs to the night before (see CLOSING_DAY_STARTS_AT_HOUR in
+-- js/config.js) — which is why it is a date the app supplies, not now()::date.
 -- ---------------------------------------------------------------------------
-create table public.hot_bags (
+create table public.closing_items (
   id uuid primary key default gen_random_uuid(),
-  name text not null,
-  last_cleaned timestamptz,
-  -- how many days this specific bag can go without cleaning before the
-  -- kiosk/admin flag it — bags see different volume, so this is per-bag
-  -- rather than one global window (see js/config.js for the fallback).
-  clean_window_days integer not null default 7,
-  active boolean not null default true,
-  created_at timestamptz not null default now()
+  label text not null,
+  sort_order integer not null default 0,
+  active boolean not null default true
 );
 
-create table public.hot_bag_maintenance (
+create table public.closing_checks (
   id uuid primary key default gen_random_uuid(),
-  bag_id uuid not null references public.hot_bags (id) on delete cascade,
-  issue text not null,
-  notes text,
-  -- vehicles.status is an enum; these were free text, so a typo'd or
-  -- API-inserted value would silently never match the 'open' filters the
-  -- dashboards count on.
-  status text not null default 'open' check (status in ('open', 'resolved')),
-  submitted_at timestamptz not null default now(),
-  resolved_at timestamptz
+  item_id uuid not null references public.closing_items (id) on delete restrict,
+  close_date date not null,
+  checked boolean not null default true,
+  checked_at timestamptz,
+  unique (item_id, close_date)
 );
 
-create index hot_bag_maintenance_bag_id_idx on public.hot_bag_maintenance (bag_id);
-create index hot_bag_maintenance_submitted_at_idx on public.hot_bag_maintenance (submitted_at desc);
+create index closing_checks_close_date_idx on public.closing_checks (close_date desc);
 
 -- ---------------------------------------------------------------------------
 -- driver_incidents: customer complaints about a specific driver, logged and
@@ -280,8 +276,8 @@ alter table public.vehicle_maintenance enable row level security;
 alter table public.driving_sessions enable row level security;
 alter table public.checklist_items enable row level security;
 alter table public.driving_session_checklist_items enable row level security;
-alter table public.hot_bags enable row level security;
-alter table public.hot_bag_maintenance enable row level security;
+alter table public.closing_items enable row level security;
+alter table public.closing_checks enable row level security;
 alter table public.driver_incidents enable row level security;
 alter table public.slow_tasks enable row level security;
 alter table public.slow_task_completions enable row level security;
@@ -293,7 +289,7 @@ alter table public.slow_task_completion_drivers enable row level security;
 -- developer. Never delete — deactivating sets active = false so the driving
 -- history keeps resolving to a real vehicle.
 --
--- Drivers, hot bags, and slow tasks get full admin CRUD (select/insert/
+-- Drivers and slow tasks get full admin CRUD (select/insert/
 -- update, never delete — deactivating sets active = false so history stays
 -- intact). The kiosk's "Not listed — type my name" fallback also relies on
 -- drivers_insert.
@@ -306,8 +302,8 @@ create policy vehicles_update on public.vehicles for update using (true) with ch
 
 -- vehicle_maintenance: the kiosk files issues from the board, admin resolves
 -- them on the Vehicles screen. Update is what makes Resolve/Reopen work — the
--- same pair hot_bag_maintenance and driver_incidents already have. Never
--- delete: the maintenance log is history.
+-- same pair driver_incidents already has. Never delete: the maintenance log is
+-- history.
 create policy vehicle_maintenance_select on public.vehicle_maintenance for select using (true);
 create policy vehicle_maintenance_insert on public.vehicle_maintenance for insert with check (true);
 create policy vehicle_maintenance_update on public.vehicle_maintenance
@@ -331,19 +327,18 @@ create policy driving_session_checklist_items_select
 create policy driving_session_checklist_items_insert
   on public.driving_session_checklist_items for insert with check (true);
 
--- hot_bags: kiosk reads all bags and updates last_cleaned; admin adds new
--- bags and edits name/clean_window_days/active.
-create policy hot_bags_select on public.hot_bags for select using (true);
-create policy hot_bags_insert on public.hot_bags for insert with check (true);
-create policy hot_bags_update on public.hot_bags for update using (true) with check (true);
+-- closing_items: edited from admin exactly like checklist_items. No delete:
+-- closing_checks rows must keep resolving to a real label.
+create policy closing_items_select on public.closing_items for select using (true);
+create policy closing_items_insert on public.closing_items for insert with check (true);
+create policy closing_items_update on public.closing_items for update using (true) with check (true);
 
--- hot_bag_maintenance: the kiosk files issues, admin resolves them. Update is
--- needed for the Resolve/Reopen action -- without it the status column and the
--- dashboard's open-issue count are write-once and every issue stays open
--- forever. Never delete: the maintenance log is history.
-create policy hot_bag_maintenance_select on public.hot_bag_maintenance for select using (true);
-create policy hot_bag_maintenance_insert on public.hot_bag_maintenance for insert with check (true);
-create policy hot_bag_maintenance_update on public.hot_bag_maintenance for update using (true) with check (true);
+-- closing_checks: the kiosk ticks and unticks with an upsert on
+-- (item_id, close_date), which needs both insert and update. Unticking sets
+-- checked = false rather than deleting — no table here allows a client delete.
+create policy closing_checks_select on public.closing_checks for select using (true);
+create policy closing_checks_insert on public.closing_checks for insert with check (true);
+create policy closing_checks_update on public.closing_checks for update using (true) with check (true);
 
 -- driver_incidents: admin-only in practice (no kiosk screen touches this
 -- table), but there's no per-role identity to enforce that at the RLS
@@ -371,7 +366,7 @@ create policy slow_task_completion_drivers_insert
   on public.slow_task_completion_drivers for insert with check (true);
 
 -- ---------------------------------------------------------------------------
--- seed data — see README "How to change drivers/vehicles/hot bags" for how
+-- seed data — see README "How to change drivers/vehicles" for how
 -- to edit this safely after the first run.
 -- ---------------------------------------------------------------------------
 insert into public.drivers (name, employee_number) values
@@ -392,11 +387,16 @@ insert into public.checklist_items (label, sort_order) values
   ('Return delivery equipment', 4),
   ('Report any damage or issue', 5);
 
-insert into public.hot_bags (name, last_cleaned) values
-  ('Hot Bag 01', now() - interval '2 days'),
-  ('Hot Bag 02', now() - interval '10 days'),
-  ('Hot Bag 03', now() - interval '1 days'),
-  ('Hot Bag 04', now() - interval '9 days');
+-- A starting point, meant to be edited in Admin -> Closing Checklist.
+insert into public.closing_items (label, sort_order) values
+  ('Clean and sanitize every hot bag, and leave them open to dry', 1),
+  ('Every vehicle returned and signed out in PitCrew', 2),
+  ('Trash cleared out of every vehicle', 3),
+  ('Vehicles locked, windows up, lights off', 4),
+  ('Keys hung back on the key board', 5),
+  ('Delivery phones and chargers plugged in', 6),
+  ('Delivery staging area wiped down and cleared', 7),
+  ('Any vehicle problem from tonight reported on the board', 8);
 
 -- One of each schedule, so every shape in the table above has a worked example.
 insert into public.slow_tasks (name, description, schedule, frequency_minutes, priority, last_completed) values

@@ -783,9 +783,21 @@ button.k-adminlink {
   opacity: 1;
 }
 
+.check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .check-label {
   font-size: var(--fs-body-lg);
   color: var(--label-2);
+}
+
+.check-sub {
+  font-size: var(--fs-sub);
+  color: var(--label-3);
 }
 
 .check[aria-checked='true'] .check-label {

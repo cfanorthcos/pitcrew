@@ -22,14 +22,6 @@ import {
   createDriverIncident,
   updateDriverIncident,
   setDriverIncidentStatus,
-  fetchHotBags,
-  fetchAllHotBags,
-  createHotBag,
-  updateHotBag,
-  setHotBagActive,
-  fetchHotBagMaintenanceHistory,
-  fetchOpenHotBagIssues,
-  setHotBagIssueStatus,
   fetchSlowTasks,
   fetchAllSlowTasks,
   createSlowTask,
@@ -42,18 +34,29 @@ import {
   updateChecklistItem,
   setChecklistItemActive,
   reorderChecklistItems,
+  fetchClosingItems,
+  fetchAllClosingItems,
+  createClosingItem,
+  updateClosingItem,
+  setClosingItemActive,
+  reorderClosingItems,
+  fetchClosingChecks,
+  fetchClosingHistory,
   fetchDriverHistory,
   fetchVehicleHistory,
   HISTORY_PAGE_SIZE,
 } from './supabase.js';
-import { HOT_BAG_CLEAN_WINDOW_DAYS, ADMIN_PIN, SHIFT_OVERDUE_HOURS } from './config.js';
+import { ADMIN_PIN, SHIFT_OVERDUE_HOURS, CLOSING_DAY_STARTS_AT_HOUR } from './config.js';
 import {
   escapeHtml,
   safeHex,
-  formatDate,
   formatDateTime,
   scheduleLabel,
-  isNeedsCleaning,
+  closingDate,
+  shiftCloseDate,
+  formatCloseDate,
+  formatTime,
+  formatClockTime,
   taskStatus,
   taskSchedule,
   taskDueTimes,
@@ -117,8 +120,8 @@ async function renderDashboard() {
     const [
       vehicles,
       openSessions,
-      hotBags,
-      openBagIssues,
+      closingItems,
+      closingChecks,
       slowTasks,
       openIncidents_,
       openVehicleIssues_,
@@ -126,8 +129,8 @@ async function renderDashboard() {
     ] = await Promise.all([
       fetchVehiclesWithAvailability(),
       fetchOpenSessions(),
-      fetchHotBags(),
-      fetchOpenHotBagIssues(),
+      fetchClosingItems().catch(() => []),
+      fetchClosingChecks(closingDate()).catch(() => []),
       fetchSlowTasks(),
       fetchOpenDriverIncidents().catch(() => []),
       fetchOpenVehicleIssues().catch(() => []),
@@ -136,14 +139,14 @@ async function renderDashboard() {
 
     const out = vehicles.filter((v) => v.activeSession).length;
     const free = vehicles.filter((v) => !v.activeSession && v.status !== 'out_of_service').length;
-    const needsCleaning = hotBags.filter(isNeedsCleaning).length;
+    const ticked = new Set(closingChecks.filter((c) => c.checked).map((c) => c.item_id));
+    const closedItems = closingItems.filter((i) => ticked.has(i.id)).length;
     // Through taskStatus with the day's counts, the same as the kiosk badge —
     // a times_per_day task that has had all its runs is not due, and a tile that
     // disagrees with the wall is worse than no tile.
     const dueTasks = slowTasks.filter(
       (t) => taskStatus(t, { doneToday: doneToday.get(t.id) || 0 }).due,
     ).length;
-    const openIssues = openBagIssues.length;
     const openIncidents = openIncidents_.length;
     const openVehicleIssues = openVehicleIssues_.length;
 
@@ -176,10 +179,9 @@ async function renderDashboard() {
       <div class="stat-grid">
         ${statCard(out, 'Vehicles Out', 'vehicles')}
         ${statCard(free, 'Vehicles Free', 'vehicles')}
-        ${statCard(needsCleaning, 'Hot Bags Needing Cleaning', 'hotbags', needsCleaning ? 'is-warn' : '')}
         ${statCard(dueTasks, 'Slow Tasks Due', 'slowtasks', dueTasks ? 'is-warn' : '')}
         ${statCard(openVehicleIssues, 'Open Vehicle Issues', 'vehicles', openVehicleIssues ? 'is-bad' : '')}
-        ${statCard(openIssues, 'Open Bag Issues', 'hotbags', openIssues ? 'is-warn' : '')}
+        ${statCard(`${closedItems}/${closingItems.length}`, 'Closing Items Done Tonight', 'closing')}
         ${statCard(openIncidents, 'Open Driver Incidents', 'incidents', openIncidents ? 'is-bad' : '')}
       </div>
 
@@ -352,8 +354,7 @@ async function renderVehicles() {
   const container = document.getElementById('section-vehicles');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    // Three reads, for the same reason the Hot Bags screen takes three: the log
-    // below is capped history, while the per-vehicle Open Issues column has to
+    // Three reads: the log below is capped history, while the per-vehicle Open Issues column has to
     // count every open row including ones older than the cap. Both are
     // best-effort so the fleet table still renders on a project that hasn't run
     // the vehicle_maintenance migration.
@@ -731,31 +732,75 @@ async function renderDriverHistory() {
 }
 
 // ---------------------------------------------------------------------------
-// return checklist (the questions drivers answer when signing out)
+// ordered item lists: the return checklist and the closing checklist
+//
+// Same table shape, same editor — add, reword, reorder, retire — so one
+// renderer drives both and the two screens can't drift apart.
 // ---------------------------------------------------------------------------
-function openChecklistItemModal(item = null, nextSortOrder = 1) {
+const RETURN_LIST = {
+  containerId: 'section-checklist',
+  title: 'Return Checklist',
+  noun: 'Checklist Item',
+  placeholder: 'e.g. Remove trash from vehicle',
+  modalNote: 'Drivers must tick every active item before they can sign out.',
+  hint:
+    'Drivers tick every active item, in this order, before they can sign out. ' +
+    'Retiring an item hides it from new returns but keeps old returns readable.',
+  emptyWarning: 'No active items — drivers will sign out without a checklist.',
+  loadError: 'Could not load the return checklist.',
+  api: {
+    fetchAll: fetchAllChecklistItems,
+    create: createChecklistItem,
+    update: updateChecklistItem,
+    setActive: setChecklistItemActive,
+    reorder: reorderChecklistItems,
+  },
+};
+
+const CLOSING_LIST = {
+  containerId: 'closing-items',
+  title: 'Closing Checklist',
+  noun: 'Closing Item',
+  placeholder: 'e.g. Clean and sanitize every hot bag',
+  modalNote: 'Shows on the kiosk Closing tab, in this order, and starts fresh every night.',
+  hint:
+    'Ticked on the kiosk Closing tab; each tick saves on its own, so the close can be shared. ' +
+    `The list starts fresh at ${formatClockTime(CLOSING_DAY_STARTS_AT_HOUR * 60)}. ` +
+    'Retiring an item hides it from new closes but keeps old ones readable.',
+  emptyWarning: 'No active items — the kiosk Closing tab will be empty.',
+  loadError: 'Could not load the closing checklist.',
+  api: {
+    fetchAll: fetchAllClosingItems,
+    create: createClosingItem,
+    update: updateClosingItem,
+    setActive: setClosingItemActive,
+    reorder: reorderClosingItems,
+  },
+};
+
+function openItemModal(list, item = null, nextSortOrder = 1) {
   const isEdit = Boolean(item);
   const sheet = openModal(
-    isEdit ? `Edit ${item.label}` : 'Add a checklist item',
+    isEdit ? `Edit ${item.label}` : `Add a ${list.noun.toLowerCase()}`,
     `
-      <h2>${isEdit ? 'Edit Checklist Item' : 'Add Checklist Item'}</h2>
-      <p class="meta">Drivers must tick every active item before they can sign out.</p>
+      <h2>${isEdit ? `Edit ${list.noun}` : `Add ${list.noun}`}</h2>
+      <p class="meta">${escapeHtml(list.modalNote)}</p>
       ${field(
         'Label',
-        'checklist-label-input',
+        'item-label-input',
         textInput({
-          id: 'checklist-label-input',
-          placeholder: 'e.g. Remove trash from vehicle',
+          id: 'item-label-input',
+          placeholder: list.placeholder,
           value: item?.label ?? '',
         }),
       )}
-      ${modalActions(isEdit ? 'Save Changes' : 'Add Item', 'checklist-save-btn')}
+      ${modalActions(isEdit ? 'Save Changes' : 'Add Item', 'item-save-btn')}
     `,
   );
 
-  const saveBtn = sheet.querySelector('#checklist-save-btn');
+  const saveBtn = sheet.querySelector('#item-save-btn');
   saveBtn.addEventListener('click', async () => {
-    const label = sheet.querySelector('#checklist-label-input').value.trim();
+    const label = sheet.querySelector('#item-label-input').value.trim();
     if (!label) {
       showError('Label is required.');
       return;
@@ -763,11 +808,11 @@ function openChecklistItemModal(item = null, nextSortOrder = 1) {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      if (isEdit) await updateChecklistItem(item.id, { label });
-      else await createChecklistItem(label, nextSortOrder);
+      if (isEdit) await list.api.update(item.id, { label });
+      else await list.api.create(label, nextSortOrder);
       closeModal();
-      showSuccess(isEdit ? 'Checklist item updated.' : 'Checklist item added.');
-      await renderChecklistItems();
+      showSuccess(isEdit ? `${list.noun} updated.` : `${list.noun} added.`);
+      await renderItemList(list);
     } catch (err) {
       showError(err.message || 'Could not save this item. Try again.');
       saveBtn.disabled = false;
@@ -776,11 +821,11 @@ function openChecklistItemModal(item = null, nextSortOrder = 1) {
   });
 }
 
-async function renderChecklistItems() {
-  const container = document.getElementById('section-checklist');
+async function renderItemList(list) {
+  const container = document.getElementById(list.containerId);
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const items = await fetchAllChecklistItems();
+    const items = await list.api.fetchAll();
     const active = items.filter((i) => i.active);
 
     const rows = items
@@ -821,31 +866,24 @@ async function renderChecklistItems() {
       .join('');
 
     container.innerHTML = `
-      ${sectionToolbar('Return Checklist', actionButton('+ Add Item', 'add-checklist-btn'))}
-      ${sectionHint(
-        'Drivers tick every active item, in this order, before they can sign out. ' +
-          'Retiring an item hides it from new returns but keeps old returns readable.',
-      )}
-      ${
-        active.length === 0
-          ? sectionWarning('No active items — drivers will sign out without a checklist.')
-          : ''
-      }
+      ${sectionToolbar(list.title, actionButton('+ Add Item', 'add-item-btn'))}
+      ${sectionHint(list.hint)}
+      ${active.length === 0 ? sectionWarning(list.emptyWarning) : ''}
       ${dataTable({
         columns: ['#', 'Item', 'Status', 'Actions'],
         rows,
-        empty: 'No checklist items yet.',
+        empty: 'No items yet.',
       })}
     `;
 
     const nextSortOrder = items.length + 1;
     container
-      .querySelector('#add-checklist-btn')
-      .addEventListener('click', () => openChecklistItemModal(null, nextSortOrder));
+      .querySelector('#add-item-btn')
+      .addEventListener('click', () => openItemModal(list, null, nextSortOrder));
 
     container.querySelectorAll('.edit-item-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        openChecklistItemModal(items.find((i) => i.id === btn.dataset.itemId));
+        openItemModal(list, items.find((i) => i.id === btn.dataset.itemId));
       });
     });
 
@@ -854,8 +892,8 @@ async function renderChecklistItems() {
         const item = items.find((i) => i.id === btn.dataset.itemId);
         btn.disabled = true;
         try {
-          await setChecklistItemActive(item.id, !item.active);
-          await renderChecklistItems();
+          await list.api.setActive(item.id, !item.active);
+          await renderItemList(list);
         } catch (err) {
           showError(err.message || 'Could not update this item. Try again.');
           btn.disabled = false;
@@ -877,19 +915,103 @@ async function renderChecklistItems() {
           b.disabled = true;
         });
         try {
-          await reorderChecklistItems(reordered.map((i) => i.id));
+          await list.api.reorder(reordered.map((i) => i.id));
         } catch (err) {
-          showError(err.message || 'Could not reorder the checklist. Try again.');
+          showError(err.message || 'Could not reorder the list. Try again.');
         }
         // Re-render either way: a partial reorder must not leave the screen
         // showing an order the database doesn't actually have.
-        await renderChecklistItems();
+        await renderItemList(list);
       });
     });
   } catch {
-    showError('Could not load the return checklist.');
-    container.innerHTML = '<p class="empty-state">Could not load the return checklist.</p>';
+    showError(list.loadError);
+    container.innerHTML = `<p class="empty-state">${escapeHtml(list.loadError)}</p>`;
   }
+}
+
+const renderChecklistItems = () => renderItemList(RETURN_LIST);
+
+// How far back Recent Closes looks. A month is enough to see a particular item
+// being skipped as a pattern, and stays one small read.
+const CLOSING_HISTORY_NIGHTS = 30;
+
+// One row per night, from tonight back to the first night anything was ticked,
+// so a night where nobody touched the list shows up as a gap rather than
+// silently not being there.
+async function renderClosingHistory() {
+  const container = document.getElementById('closing-history');
+  container.innerHTML = '<p class="empty-state">Loading…</p>';
+  try {
+    const tonight = closingDate();
+    const since = shiftCloseDate(tonight, -(CLOSING_HISTORY_NIGHTS - 1));
+    const [items, checks] = await Promise.all([fetchAllClosingItems(), fetchClosingHistory(since)]);
+    const active = items.filter((i) => i.active);
+
+    const byNight = new Map();
+    for (const c of checks) {
+      if (!c.checked) continue;
+      if (!byNight.has(c.close_date)) byNight.set(c.close_date, new Map());
+      byNight.get(c.close_date).set(c.item_id, c.checked_at);
+    }
+
+    // YYYY-MM-DD compares correctly as text, which is what lets the loop walk
+    // backwards with a plain >=.
+    const nights = [];
+    const earliest = [...byNight.keys()].sort()[0];
+    if (earliest) {
+      for (let night = tonight; night >= earliest; night = shiftCloseDate(night, -1)) nights.push(night);
+    }
+
+    const rows = nights
+      .map((night) => {
+        const ticked = byNight.get(night) ?? new Map();
+        const missing = active.filter((i) => !ticked.has(i.id));
+        const done = active.length - missing.length;
+        const complete = active.length > 0 && missing.length === 0;
+        const lastTick = [...ticked.values()].filter(Boolean).sort().pop();
+        let state = badge('Not done', 'bad');
+        if (complete) state = badge('Complete', 'good');
+        else if (night === tonight) state = badge(done ? 'In progress' : 'Not started', 'neutral');
+        else if (done) state = badge('Incomplete', 'warn');
+        return `
+          <tr>
+            <td><strong>${escapeHtml(formatCloseDate(night))}</strong></td>
+            <td>${state}</td>
+            <td>${done} of ${active.length}</td>
+            <td>${complete ? escapeHtml(formatTime(lastTick)) : '—'}</td>
+            <td class="cell-wrap">${
+              done === 0 && active.length > 0
+                ? 'Nothing ticked'
+                : escapeHtml(missing.map((i) => i.label).join(', ') || '—')
+            }</td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    container.innerHTML = `
+      <h2 class="section-title">Recent Closes</h2>
+      ${sectionHint(
+        `The last ${CLOSING_HISTORY_NIGHTS} nights, measured against today's active items — ` +
+          'an item added this week reads as missed on nights before it existed.',
+      )}
+      ${dataTable({
+        columns: ['Night', 'State', 'Ticked', 'Finished', 'Not ticked'],
+        rows,
+        empty: 'No closes recorded yet.',
+      })}
+    `;
+  } catch {
+    showError('Could not load closing history.');
+    container.innerHTML = '<p class="empty-state">Could not load closing history.</p>';
+  }
+}
+
+function renderClosingAdmin() {
+  document.getElementById('section-closing').innerHTML =
+    '<div id="closing-items"></div><div id="closing-history"></div>';
+  return Promise.all([renderItemList(CLOSING_LIST), renderClosingHistory()]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1056,178 +1178,6 @@ async function renderDriverIncidents() {
   } catch {
     showError('Could not load driver incidents.');
     container.innerHTML = '<p class="empty-state">Could not load driver incidents.</p>';
-  }
-}
-
-// ---------------------------------------------------------------------------
-// hot bags (full CRUD + maintenance history)
-// ---------------------------------------------------------------------------
-function openHotBagModal(bag = null) {
-  const isEdit = Boolean(bag);
-  const sheet = openModal(
-    isEdit ? `Edit ${bag.name}` : 'Add a hot bag',
-    `
-      <h2>${isEdit ? 'Edit Hot Bag' : 'Add Hot Bag'}</h2>
-      ${field(
-        'Name',
-        'hotbag-name-input',
-        textInput({ id: 'hotbag-name-input', placeholder: 'e.g. Hot Bag 05', value: bag?.name ?? '' }),
-      )}
-      ${field(
-        'Needs cleaning after (days)',
-        'hotbag-window-input',
-        numberInput({
-          id: 'hotbag-window-input',
-          min: 1,
-          value: bag?.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS,
-        }),
-      )}
-      ${modalActions(isEdit ? 'Save Changes' : 'Add Hot Bag', 'hotbag-save-btn')}
-    `,
-  );
-
-  const saveBtn = sheet.querySelector('#hotbag-save-btn');
-  saveBtn.addEventListener('click', async () => {
-    const name = sheet.querySelector('#hotbag-name-input').value.trim();
-    const windowDays = parseInt(sheet.querySelector('#hotbag-window-input').value, 10);
-    if (!name) {
-      showError('Name is required.');
-      return;
-    }
-    if (!Number.isFinite(windowDays) || windowDays < 1) {
-      showError('Cleaning window must be at least 1 day.');
-      return;
-    }
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    try {
-      if (isEdit) await updateHotBag(bag.id, { name, clean_window_days: windowDays });
-      else await createHotBag(name, windowDays);
-      closeModal();
-      showSuccess(isEdit ? 'Hot bag updated.' : `${name} added.`);
-      await renderHotBagsAdmin();
-    } catch (err) {
-      showError(err.message || 'Could not save this hot bag. Try again.');
-      saveBtn.disabled = false;
-      saveBtn.textContent = isEdit ? 'Save Changes' : 'Add Hot Bag';
-    }
-  });
-}
-
-async function renderHotBagsAdmin() {
-  const container = document.getElementById('section-hotbags');
-  container.innerHTML = '<p class="empty-state">Loading…</p>';
-  try {
-    // Two reads on purpose: the table below shows recent history (capped), while
-    // the per-bag Open Issues column must count every open row, including ones
-    // older than the cap.
-    const [bags, maintenance, openBagIssues] = await Promise.all([
-      fetchAllHotBags(),
-      fetchHotBagMaintenanceHistory(),
-      fetchOpenHotBagIssues(),
-    ]);
-
-    const openIssuesByBag = new Map();
-    openBagIssues.forEach((m) => openIssuesByBag.set(m.bag_id, (openIssuesByBag.get(m.bag_id) || 0) + 1));
-
-    const bagRows = bags
-      .map((bag) => {
-        const needsCleaning = isNeedsCleaning(bag);
-        const openCount = openIssuesByBag.get(bag.id) || 0;
-        const tone = !bag.active ? 'muted' : needsCleaning ? 'warn' : 'good';
-        const label = !bag.active ? 'Inactive' : needsCleaning ? 'Needs Cleaning' : 'Current';
-        return `
-          <tr class="${bag.active ? '' : 'is-inactive'}">
-            <td><strong>${escapeHtml(bag.name)}</strong></td>
-            <td>${formatDate(bag.last_cleaned, 'Never')}</td>
-            <td>${escapeHtml(String(bag.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS))} days</td>
-            <td>${badge(label, tone)}</td>
-            <td>${openCount}</td>
-            <td>${rowActions([
-              { label: 'Edit', className: 'edit-bag-btn', data: { 'data-bag-id': bag.id } },
-              {
-                label: bag.active ? 'Deactivate' : 'Reactivate',
-                className: 'toggle-bag-btn',
-                data: { 'data-bag-id': bag.id },
-              },
-            ])}</td>
-          </tr>
-        `;
-      })
-      .join('');
-
-    const maintenanceRows = maintenance
-      .map(
-        (m) => `
-          <tr>
-            <td><strong>${escapeHtml(m.hot_bags?.name ?? '—')}</strong></td>
-            <td>${escapeHtml(m.issue)}</td>
-            <td class="cell-wrap">${escapeHtml(m.notes ?? '—')}</td>
-            <td>${badge(m.status, m.status === 'open' ? 'warn' : 'good')}</td>
-            <td>${formatDateTime(m.submitted_at)}</td>
-            <td>${rowActions([
-              {
-                label: m.status === 'open' ? 'Resolve' : 'Reopen',
-                className: 'toggle-maintenance-btn',
-                data: { 'data-maintenance-id': m.id },
-              },
-            ])}</td>
-          </tr>
-        `,
-      )
-      .join('');
-
-    container.innerHTML = `
-      ${sectionToolbar('Hot Bags', actionButton('+ Add Hot Bag', 'add-hotbag-btn'))}
-      ${dataTable({
-        columns: ['Bag', 'Last Cleaned', 'Clean Window', 'Status', 'Open Issues', 'Actions'],
-        rows: bagRows,
-        empty: 'No hot bags configured.',
-      })}
-      <h2 class="section-title">Maintenance History</h2>
-      ${dataTable({
-        columns: ['Bag', 'Issue', 'Notes', 'Status', 'Submitted', 'Actions'],
-        rows: maintenanceRows,
-        empty: 'No maintenance reports yet.',
-      })}
-    `;
-
-    container.querySelector('#add-hotbag-btn').addEventListener('click', () => openHotBagModal());
-
-    container.querySelectorAll('.edit-bag-btn').forEach((btn) => {
-      btn.addEventListener('click', () => openHotBagModal(bags.find((b) => b.id === btn.dataset.bagId)));
-    });
-
-    container.querySelectorAll('.toggle-bag-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const bag = bags.find((b) => b.id === btn.dataset.bagId);
-        btn.disabled = true;
-        try {
-          await setHotBagActive(bag.id, !bag.active);
-          await renderHotBagsAdmin();
-        } catch (err) {
-          showError(err.message || 'Could not update this hot bag. Try again.');
-          btn.disabled = false;
-        }
-      });
-    });
-
-    container.querySelectorAll('.toggle-maintenance-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const report = maintenance.find((m) => m.id === btn.dataset.maintenanceId);
-        btn.disabled = true;
-        try {
-          await setHotBagIssueStatus(report.id, report.status === 'open');
-          await renderHotBagsAdmin();
-        } catch (err) {
-          showError(err.message || 'Could not update this maintenance report. Try again.');
-          btn.disabled = false;
-        }
-      });
-    });
-  } catch {
-    showError('Could not load hot bag data.');
-    container.innerHTML = '<p class="empty-state">Could not load hot bag data.</p>';
   }
 }
 
@@ -1625,8 +1575,8 @@ const RENDERERS = {
   drivers: renderDrivers,
   'driver-history': renderDriverHistory,
   checklist: renderChecklistItems,
+  closing: renderClosingAdmin,
   incidents: renderDriverIncidents,
-  hotbags: renderHotBagsAdmin,
   slowtasks: renderSlowTasksAdmin,
 };
 

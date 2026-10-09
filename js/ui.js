@@ -2,7 +2,7 @@
 // dashboard (admin.js). These were previously duplicated verbatim in both
 // files, which is how the escaping bug below survived in two places at once.
 
-import { HOT_BAG_CLEAN_WINDOW_DAYS, SHIFT_OVERDUE_HOURS } from './config.js';
+import { CLOSING_DAY_STARTS_AT_HOUR, SHIFT_OVERDUE_HOURS } from './config.js';
 import {
   SLOW_TASK_PRIORITIES,
   DEFAULT_SLOW_TASK_PRIORITY,
@@ -135,11 +135,40 @@ export function frequencyLabel(days) {
   return intervalLabel(days * 1440);
 }
 
-export function isNeedsCleaning(bag) {
-  if (!bag.last_cleaned) return true;
-  const elapsedMs = Date.now() - new Date(bag.last_cleaned).getTime();
-  const windowDays = bag.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS;
-  return elapsedMs > windowDays * 24 * 60 * 60 * 1000;
+// ---------------------------------------------------------------------------
+// closing checklist
+// ---------------------------------------------------------------------------
+
+// The business date a closing tick belongs to, as YYYY-MM-DD in the kiosk's own
+// calendar. Before CLOSING_DAY_STARTS_AT_HOUR it is still last night's close.
+// Built from local date parts, not toISOString(), which is UTC and would hand a
+// Mountain-time store tomorrow's date from 6pm onward.
+export function closingDate(now = new Date(), startsAtHour = CLOSING_DAY_STARTS_AT_HOUR) {
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (now.getHours() < startsAtHour) day.setDate(day.getDate() - 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+}
+
+// A close date `days` later (negative for earlier), by calendar day. Not by
+// subtracting 24h: across a DST change that lands an hour off, and an hour off
+// near the 4am rollover is a whole night off.
+export function shiftCloseDate(value, days) {
+  const [y, m, d] = String(value).split('-').map(Number);
+  return closingDate(new Date(y, m - 1, d + days, 12), 0);
+}
+
+// "Thu, Oct 9" for a YYYY-MM-DD close date. Parsed as local parts: new
+// Date('2026-10-09') is UTC midnight, which is the 8th everywhere west of
+// Greenwich.
+export function formatCloseDate(value) {
+  const [y, m, d] = String(value).split('-').map(Number);
+  if (!y || !m || !d) return '—';
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 // ---------------------------------------------------------------------------

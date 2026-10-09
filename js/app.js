@@ -8,22 +8,22 @@ import {
   checkoutVehicle,
   fetchChecklistItems,
   returnVehicle,
-  fetchHotBags,
-  fetchOpenHotBagIssues,
-  markHotBagCleaned,
-  reportHotBagIssue,
+  fetchClosingItems,
+  fetchClosingChecks,
+  setClosingItemChecked,
   fetchSlowTasks,
   completeSlowTask,
   fetchSlowTaskCompletionCounts,
 } from './supabase.js';
-import { HOT_BAG_CLEAN_WINDOW_DAYS } from './config.js';
+import { CLOSING_DAY_STARTS_AT_HOUR } from './config.js';
 import {
   escapeHtml,
   safeHex,
   inkOn,
-  formatRelativeDays,
   scheduleLabel,
-  isNeedsCleaning,
+  closingDate,
+  formatCloseDate,
+  formatTime,
   isTaskDue,
   taskStatus,
   sortSlowTasks,
@@ -64,8 +64,8 @@ const BOARD_REFRESH_MS = 20000;
 
 // A wall-mounted screen at a work station has two jobs: it is an ambient fleet
 // display, and it is a task device. Without this the second job destroys the
-// first — somebody checks a hot bag, walks away, and the wall shows a bag list
-// until the next person thinks to tap back. Everything returns to the board.
+// first — somebody ticks a closing item, walks away, and the wall shows the
+// checklist until the next person thinks to tap back. Everything returns to the board.
 const IDLE_RETURN_MS = 45000;
 
 // Poll for a deploy. Five minutes is far more often than this app ships, and a
@@ -73,11 +73,9 @@ const IDLE_RETURN_MS = 45000;
 const VERSION_CHECK_MS = 300000;
 
 const RECENT_LIMIT = 8;
-const ISSUE_OPTIONS = ['Broken zipper', 'Damaged insulation', 'Dirty', 'Torn', 'Other'];
 
-// Deliberately not the same list as the hot bags': a driver reporting a car has
-// a different set of things to say, and "Other" plus the notes box catches the
-// rest. Reporting never changes vehicles.status — that call is the operator's,
+// What a driver reporting a car usually has to say; "Other" plus the notes box
+// catches the rest. Reporting never changes vehicles.status — that call is the operator's,
 // and it happens on the admin Vehicles screen once somebody has read the report.
 const VEHICLE_ISSUE_OPTIONS = [
   'Warning light on',
@@ -99,6 +97,10 @@ const state = {
   confusable: null,
   checklistItems: [],
   checked: new Set(),
+  closingDate: null, // the business date the closing list on screen belongs to
+  closingItems: [],
+  closingChecks: new Map(), // item id -> checked_at, ticked items only
+  closingPending: new Set(), // item ids with a save in flight
 };
 
 const $ = (id) => document.getElementById(id);
@@ -108,7 +110,7 @@ const $ = (id) => document.getElementById(id);
 // ---------------------------------------------------------------------------
 const VIEWS = {
   vehicles: { title: 'Vehicles', tab: 'vehicles', chrome: 'brand', load: loadVehicles },
-  hotbags: { title: 'Hot Bags', tab: 'hotbags', chrome: 'brand', load: loadHotBags },
+  closing: { title: 'Closing', tab: 'closing', chrome: 'brand', load: loadClosing },
   slowtasks: { title: 'Slow Tasks', tab: 'slowtasks', chrome: 'brand', load: loadSlowTasks },
   identity: { title: "Who's driving?", chrome: 'flow', load: loadIdentity },
   return: { title: 'Before you sign out', chrome: 'flow', load: loadReturn },
@@ -184,12 +186,16 @@ async function refreshTabCounts() {
   // The counts read is what tells a times_per_day task how many runs are left
   // in the day. Best-effort: a badge that over-counts by showing a task as
   // still due is the safe way to be wrong.
-  const [bags, tasks, doneToday] = await Promise.all([
-    fetchHotBags().catch(() => null),
+  const today = closingDate();
+  const [closingItems, closingChecks, tasks, doneToday] = await Promise.all([
+    fetchClosingItems().catch(() => null),
+    fetchClosingChecks(today).catch(() => null),
     fetchSlowTasks().catch(() => null),
     fetchSlowTaskCompletionCounts(startOfTodayIso()).catch(() => new Map()),
   ]);
-  if (bags) setTabCount('hotbags', bags.filter(isNeedsCleaning).length);
+  if (closingItems && closingChecks) {
+    setTabCount('closing', closingBadgeCount(closingItems, tickedMap(closingChecks)));
+  }
   if (tasks) {
     setTabCount(
       'slowtasks',
@@ -238,7 +244,7 @@ function vehicleTile(vehicle, openIssues = 0) {
     out: `<div class="card-meta">Not available to take.</div>`,
   }[kind];
 
-  // Same treatment the hot bag cards give an open report. Without it a driver
+  // Without it a driver
   // flags a warning light and the tile keeps reading "Available" to the next
   // person who walks up, until an admin happens to open the dashboard.
   const flag = openIssues
@@ -268,8 +274,8 @@ async function loadVehicles({ spinner = true } = {}) {
   const board = $('vehicle-board');
   if (spinner && board.children.length === 0) board.innerHTML = emptyState('Loading…');
   try {
-    // Best-effort on the issues, like the hot bag tab: a project that hasn't run
-    // the vehicle_maintenance migration yet still gets a working board.
+    // Best-effort on the issues: a project that hasn't run the
+    // vehicle_maintenance migration yet still gets a working board.
     const [vehicles, openIssues] = await Promise.all([
       fetchVehiclesWithAvailability(),
       fetchOpenVehicleIssues().catch(() => []),
@@ -682,128 +688,107 @@ $('submit-return-btn').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// hot bags
+// closing checklist
+//
+// Every tap saves on its own rather than at a final "submit", so the close can
+// be split between whoever is still in the building, and the idle timer sending
+// the screen back to the board mid-list loses nothing.
 // ---------------------------------------------------------------------------
-async function loadHotBags() {
-  const container = $('hotbag-list');
+function tickedMap(checks) {
+  return new Map(checks.filter((c) => c.checked).map((c) => [c.item_id, c.checked_at]));
+}
+
+// Only counts once somebody has started the close. A badge reading 9 from
+// breakfast onward is a badge everybody learns to ignore by lunch; one that
+// appears at the first tick says "a close is under way and isn't finished".
+function closingBadgeCount(items, ticked) {
+  const done = items.filter((i) => ticked.has(i.id)).length;
+  return done > 0 ? items.length - done : 0;
+}
+
+async function loadClosing() {
+  const container = $('closing-list');
   container.innerHTML = emptyState('Loading…');
   try {
-    // Open maintenance reports used to be invisible here: a driver flagged a
-    // torn bag and the card carried on reading normal until an admin happened
-    // to open the dashboard. Best-effort so a missing policy cannot take the
-    // whole tab down with it.
-    const [bags, openIssues] = await Promise.all([
-      fetchHotBags(),
-      fetchOpenHotBagIssues().catch(() => []),
-    ]);
-
-    const issueByBag = new Map();
-    openIssues.forEach((i) => issueByBag.set(i.bag_id, (issueByBag.get(i.bag_id) || 0) + 1));
-
-    const needing = bags.filter(isNeedsCleaning).length;
-    setTabCount('hotbags', needing);
-    $('k-trailing').innerHTML = needing
-      ? `<span><b class="tabular" style="color:var(--orange-ink)">${needing}</b> need cleaning</span>`
-      : '<span>All current</span>';
-
-    container.innerHTML = bags.length
-      ? bags.map((bag) => hotBagCard(bag, issueByBag.get(bag.id) || 0)).join('')
-      : emptyState('No hot bags configured.');
+    const date = closingDate();
+    const [items, checks] = await Promise.all([fetchClosingItems(), fetchClosingChecks(date)]);
+    state.closingDate = date;
+    state.closingItems = items;
+    state.closingChecks = tickedMap(checks);
+    state.closingPending = new Set();
+    renderClosing();
   } catch {
-    showError('Could not load hot bags. Check your connection.');
-    container.innerHTML = emptyState('Could not load hot bags.');
+    showError('Could not load the closing checklist. Check your connection.');
+    container.innerHTML = emptyState('Could not load the closing checklist.');
   }
 }
 
-function hotBagCard(bag, openIssues) {
-  const needs = isNeedsCleaning(bag);
-  const windowDays = bag.clean_window_days ?? HOT_BAG_CLEAN_WINDOW_DAYS;
-  return `
-    <div class="card">
-      ${iconTile(icon.bag(32), {
-        background: needs ? 'var(--orange-soft)' : 'var(--green-soft)',
-        color: needs ? 'var(--orange-ink)' : 'var(--green-ink)',
-      })}
-      <div class="card-title">${escapeHtml(bag.name)}</div>
-      ${needs ? pill('Needs cleaning', 'warn') : pill('Current', 'good')}
-      <div class="card-meta">Cleaned ${escapeHtml(formatRelativeDays(bag.last_cleaned))} · every ${escapeHtml(
-        String(windowDays),
-      )} days</div>
-      ${
-        openIssues
-          ? `<div class="flag">${icon.warning(20)}${escapeHtml(
-              `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
-            )}</div>`
-          : ''
-      }
-      <div class="card-spacer"></div>
-      ${button('Mark clean', {
-        variant: needs ? 'go' : 'fill',
-        data: { 'data-clean-bag': bag.id },
-        iconHtml: needs ? icon.check(21, '#fff') : '',
-      })}
-      ${button('Report issue', { variant: 'plain', data: { 'data-issue-bag': bag.id } })}
+function renderClosing() {
+  const container = $('closing-list');
+  const items = state.closingItems;
+  const done = items.filter((i) => state.closingChecks.has(i.id)).length;
+
+  setTabCount('closing', closingBadgeCount(items, state.closingChecks));
+  if (state.view === 'closing') {
+    $('k-trailing').innerHTML =
+      items.length && done === items.length
+        ? '<span>All done</span>'
+        : `<span><b class="tabular">${done}</b> of ${items.length} done</span>`;
+  }
+
+  if (items.length === 0) {
+    container.innerHTML = emptyState('No closing items yet — add them in Admin → Closing Checklist.');
+    return;
+  }
+
+  container.innerHTML = `
+    ${groupHead(`Tonight · ${formatCloseDate(state.closingDate)}`)}
+    <div class="group">
+      ${items
+        .map((item) => {
+          const at = state.closingChecks.get(item.id);
+          return checkRow({
+            id: item.id,
+            label: item.label,
+            checked: state.closingChecks.has(item.id),
+            sub: at ? `Done ${formatTime(at)}` : null,
+          });
+        })
+        .join('')}
     </div>
+    ${groupFoot(
+      `Each tick saves as soon as it's tapped, so the close can be shared. The list starts fresh at ${formatClockTime(
+        CLOSING_DAY_STARTS_AT_HOUR * 60,
+      )}.`,
+    )}
   `;
 }
 
-$('hotbag-list').addEventListener('click', async (event) => {
-  const cleanBtn = event.target.closest('[data-clean-bag]');
-  if (cleanBtn) {
-    cleanBtn.disabled = true;
-    cleanBtn.textContent = 'Saving…';
-    try {
-      await markHotBagCleaned(cleanBtn.dataset.cleanBag);
-      showSuccess('Marked clean.');
-      await loadHotBags();
-    } catch (err) {
-      showError(err.message || 'Could not update this hot bag. Try again.');
-      await loadHotBags();
-    }
-    return;
+$('closing-list').addEventListener('click', async (event) => {
+  const row = event.target.closest('.check');
+  if (!row) return;
+  const id = row.dataset.itemId;
+  // Two quick taps on one row would race two upserts, and whichever landed
+  // last would win regardless of which was tapped last.
+  if (state.closingPending.has(id)) return;
+
+  const nowChecked = !state.closingChecks.has(id);
+  const date = state.closingDate;
+  if (nowChecked) state.closingChecks.set(id, new Date().toISOString());
+  else state.closingChecks.delete(id);
+  state.closingPending.add(id);
+  renderClosing();
+
+  try {
+    await setClosingItemChecked(id, date, nowChecked);
+    state.closingPending.delete(id);
+  } catch (err) {
+    showError(err.message || "That tick didn't save. Try again.");
+    // Reload rather than flipping back locally: the database is the only honest
+    // answer to whether it saved.
+    await loadClosing();
   }
-  const issueBtn = event.target.closest('[data-issue-bag]');
-  if (issueBtn) openIssueModal(issueBtn.dataset.issueBag);
 });
-
-function openIssueModal(bagId) {
-  let selected = null;
-  const sheet = openModal('Report an issue', `
-    <h2>Report Issue</h2>
-    <div class="option-list">
-      ${ISSUE_OPTIONS.map(
-        (opt) => `<button type="button" class="option-btn" data-issue="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`,
-      ).join('')}
-    </div>
-    ${field('Notes', 'issue-notes', textArea({ id: 'issue-notes', placeholder: 'Optional' }))}
-    ${modalActions('Submit', 'issue-submit-btn', { disabled: true })}
-  `);
-
-  const submit = sheet.querySelector('#issue-submit-btn');
-  sheet.querySelectorAll('.option-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      sheet.querySelectorAll('.option-btn').forEach((b) => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      selected = btn.dataset.issue;
-      submit.disabled = false;
-    });
-  });
-
-  submit.addEventListener('click', async () => {
-    submit.disabled = true;
-    submit.textContent = 'Saving…';
-    try {
-      await reportHotBagIssue(bagId, selected, sheet.querySelector('#issue-notes').value.trim());
-      closeModal();
-      showSuccess('Issue reported. Thanks for flagging it.');
-      await loadHotBags();
-    } catch (err) {
-      showError(err.message || 'Could not submit this issue. Try again.');
-      submit.disabled = false;
-      submit.textContent = 'Submit';
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // slow tasks
