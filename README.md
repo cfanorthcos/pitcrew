@@ -8,9 +8,11 @@ they're not listed), and their shift starts. To sign out, they tap their own
 in-use vehicle and complete the return checklist. Anyone can report a problem
 with a car straight from the board, and the report shows on the vehicle's tile
 until an admin resolves it. The board also has a **Closing** tab — the
-end-of-night checklist, ticked off as the close happens — and a "slow tasks" tab
-for jobs on an interval, at set times of day, a set number of times a day, or
-one-off, ordered by priority when several come due at once. An admin view
+end-of-night checklist, ticked off as the close happens, with how-to
+instructions beside each task — a "slow tasks" tab for jobs on an interval, at
+set times of day, a set number of times a day, or one-off, ordered by priority
+when several come due at once, and a **Drivers** tab listing everyone on the
+roster (who's on shift first) for covering call-outs. An admin view
 (PIN-gated, asked every time it's opened) gives leadership a live operations
 dashboard, full history, in-app management of drivers, vehicles, both
 checklists and slow tasks, and a log of customer complaints against specific
@@ -482,6 +484,19 @@ The `hot_bags` and `hot_bag_maintenance` tables are left exactly as they were.
 Nothing in the app reads or writes them any more, but their history is still
 there to query, and nothing here drops them.
 
+### Ninth upgrade: instructions on closing tasks
+
+Adds the "How to do it" column to the closing checklist. Safe to re-run; needs
+the eighth upgrade first.
+
+```sql
+alter table public.closing_items add column if not exists instructions text;
+```
+
+Until this runs, the Closing tab and the admin list keep working without the
+column, but saving a closing item in admin fails with a "column not found"
+error. The kiosk's **Drivers** tab needs no SQL.
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -557,6 +572,13 @@ update drivers set active = false where name = 'Old Driver'; -- soft-remove
 
 Inactive drivers stop appearing on the kiosk's assign-vehicle dropdown but
 their history is preserved.
+
+The kiosk's **Drivers** tab lists every active driver, for working down the
+roster when somebody calls out. Whoever is on shift right now is listed first,
+with their vehicle and start time. It shows **names only**, on purpose: every
+table here is readable by anyone holding the publishable key (see "Security
+considerations"), so phone numbers and other contact details belong wherever
+the store already keeps them, not in PitCrew.
 
 ## How to log a driver incident
 
@@ -650,6 +672,11 @@ Admin → **Closing Checklist** controls the end-of-night list on the kiosk's
 **Closing** tab. Editing works exactly like the return checklist: "+ Add Item",
 **Edit**, **↑ / ↓** and **Retire / Restore**, and retiring never deletes.
 
+Each item can also have optional **How to do it** instructions. Once any item
+has some, the kiosk shows the list in two columns: the task on the left, how to
+do it on the right (stacked underneath on a narrow screen). Items without
+instructions just leave the right side blank.
+
 On the kiosk, **every tap saves on its own** — there's no submit button. That
 lets the close be split between whoever is still in the building, and means
 nothing is lost when the idle timer sends the screen back to the vehicle board
@@ -679,7 +706,8 @@ existing database, untouched, but nothing in the app uses them.
 Equivalent SQL:
 
 ```sql
-insert into closing_items (label, sort_order) values ('Lock the delivery door', 9);
+insert into closing_items (label, instructions, sort_order)
+  values ('Lock the delivery door', 'Deadbolt and the top latch; check it from outside.', 9);
 update closing_items set active = false where label = 'Old item'; -- retire
 
 -- who closed what, last night

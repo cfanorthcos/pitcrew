@@ -14,6 +14,7 @@ import {
   fetchSlowTasks,
   completeSlowTask,
   fetchSlowTaskCompletionCounts,
+  fetchOpenSessions,
 } from './supabase.js';
 import { CLOSING_DAY_STARTS_AT_HOUR } from './config.js';
 import {
@@ -50,6 +51,7 @@ import {
   listRow,
   chevron,
   checkRow,
+  checkColumns,
   groupHead,
   groupFoot,
   emptyState,
@@ -112,6 +114,7 @@ const VIEWS = {
   vehicles: { title: 'Vehicles', tab: 'vehicles', chrome: 'brand', load: loadVehicles },
   closing: { title: 'Closing', tab: 'closing', chrome: 'brand', load: loadClosing },
   slowtasks: { title: 'Slow Tasks', tab: 'slowtasks', chrome: 'brand', load: loadSlowTasks },
+  drivers: { title: 'Drivers', tab: 'drivers', chrome: 'brand', load: loadDrivers },
   identity: { title: "Who's driving?", chrome: 'flow', load: loadIdentity },
   return: { title: 'Before you sign out', chrome: 'flow', load: loadReturn },
 };
@@ -741,9 +744,13 @@ function renderClosing() {
     return;
   }
 
+  // The how-to column only appears once some item has instructions; until then
+  // it would be an empty half of the screen.
+  const twoColumn = items.some((i) => i.instructions);
   container.innerHTML = `
     ${groupHead(`Tonight · ${formatCloseDate(state.closingDate)}`)}
     <div class="group">
+      ${twoColumn ? checkColumns('Task', 'How to do it') : ''}
       ${items
         .map((item) => {
           const at = state.closingChecks.get(item.id);
@@ -752,6 +759,8 @@ function renderClosing() {
             label: item.label,
             checked: state.closingChecks.has(item.id),
             sub: at ? `Done ${formatTime(at)}` : null,
+            detail: item.instructions,
+            twoColumn,
           });
         })
         .join('')}
@@ -789,6 +798,63 @@ $('closing-list').addEventListener('click', async (event) => {
     await loadClosing();
   }
 });
+
+// ---------------------------------------------------------------------------
+// drivers
+//
+// Everyone on the roster in one place, for working down the list when somebody
+// calls out. Names only: anything stored in PitCrew is readable with the
+// publishable key, so phone numbers stay wherever the store already keeps them.
+// Who's on shift right now is listed first, since they can't be the cover.
+// ---------------------------------------------------------------------------
+async function loadDrivers() {
+  const container = $('driver-roster');
+  container.innerHTML = emptyState('Loading…');
+  try {
+    const [drivers, sessions] = await Promise.all([fetchActiveDrivers(), fetchOpenSessions()]);
+    const shiftByDriver = new Map(sessions.map((s) => [s.driver_id, s]));
+    const onShift = drivers.filter((d) => shiftByDriver.has(d.id));
+    const offShift = drivers.filter((d) => !shiftByDriver.has(d.id));
+
+    $('k-trailing').innerHTML = `<span><b class="tabular">${drivers.length}</b> driver${
+      drivers.length === 1 ? '' : 's'
+    }</span>`;
+
+    if (drivers.length === 0) {
+      container.innerHTML = emptyState('No drivers yet — add them in Admin → Drivers.');
+      return;
+    }
+
+    const row = (driver) => {
+      const session = shiftByDriver.get(driver.id);
+      return listRow({
+        leadingHtml: avatar(driver.name, session ? 'go' : ''),
+        title: driver.name,
+        sub: session
+          ? `${session.vehicles?.name ?? 'A vehicle'} · since ${formatTime(session.start_time)}`
+          : null,
+        trailingHtml: session ? pill('On shift', 'good') : '',
+        tappable: false,
+      });
+    };
+
+    const section = (title, list, gap) =>
+      list.length
+        ? `<div${gap ? ' class="stack-gap"' : ''}>
+             ${groupHead(`${title} · ${list.length}`)}
+             <div class="group is-inset">${list.map(row).join('')}</div>
+           </div>`
+        : '';
+
+    container.innerHTML = `
+      ${section('On shift now', onShift, false)}
+      ${section(onShift.length ? 'Not on shift' : 'Everyone', offShift, onShift.length > 0)}
+    `;
+  } catch {
+    showError('Could not load the driver list. Check your connection.');
+    container.innerHTML = emptyState('Could not load the driver list.');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // slow tasks

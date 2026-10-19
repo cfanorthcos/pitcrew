@@ -763,6 +763,11 @@ const CLOSING_LIST = {
   noun: 'Closing Item',
   placeholder: 'e.g. Clean and sanitize every hot bag',
   modalNote: 'Shows on the kiosk Closing tab, in this order, and starts fresh every night.',
+  // The second column on the kiosk: how to do the task, for whoever is closing
+  // for the first time. The return checklist doesn't have one.
+  instructions: {
+    placeholder: 'e.g. Wipe inside and out with sanitizer, then leave them unzipped on the rack to dry.',
+  },
   hint:
     'Ticked on the kiosk Closing tab; each tick saves on its own, so the close can be shared. ' +
     `The list starts fresh at ${formatClockTime(CLOSING_DAY_STARTS_AT_HOUR * 60)}. ` +
@@ -794,6 +799,19 @@ function openItemModal(list, item = null, nextSortOrder = 1) {
           value: item?.label ?? '',
         }),
       )}
+      ${
+        list.instructions
+          ? field(
+              'How to do it (optional)',
+              'item-instructions-input',
+              textArea({
+                id: 'item-instructions-input',
+                placeholder: list.instructions.placeholder,
+                value: item?.instructions ?? '',
+              }),
+            )
+          : ''
+      }
       ${modalActions(isEdit ? 'Save Changes' : 'Add Item', 'item-save-btn')}
     `,
   );
@@ -805,11 +823,15 @@ function openItemModal(list, item = null, nextSortOrder = 1) {
       showError('Label is required.');
       return;
     }
+    // Blank saves as null, so clearing the box really clears it.
+    const extra = list.instructions
+      ? { instructions: sheet.querySelector('#item-instructions-input').value.trim() || null }
+      : {};
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      if (isEdit) await list.api.update(item.id, { label });
-      else await list.api.create(label, nextSortOrder);
+      if (isEdit) await list.api.update(item.id, { label, ...extra });
+      else await list.api.create(label, nextSortOrder, extra);
       closeModal();
       showSuccess(isEdit ? `${list.noun} updated.` : `${list.noun} added.`);
       await renderItemList(list);
@@ -837,6 +859,7 @@ async function renderItemList(list) {
           <tr class="${item.active ? '' : 'is-inactive'}">
             <td>${item.active ? activeIndex + 1 : '—'}</td>
             <td class="cell-wrap"><strong>${escapeHtml(item.label)}</strong></td>
+            ${list.instructions ? `<td class="cell-wrap">${escapeHtml(item.instructions || '—')}</td>` : ''}
             <td>${item.active ? badge('Active', 'good') : badge('Retired', 'muted')}</td>
             <td>${rowActions([
               item.active && {
@@ -870,7 +893,9 @@ async function renderItemList(list) {
       ${sectionHint(list.hint)}
       ${active.length === 0 ? sectionWarning(list.emptyWarning) : ''}
       ${dataTable({
-        columns: ['#', 'Item', 'Status', 'Actions'],
+        columns: list.instructions
+          ? ['#', 'Task', 'How to do it', 'Status', 'Actions']
+          : ['#', 'Item', 'Status', 'Actions'],
         rows,
         empty: 'No items yet.',
       })}

@@ -388,6 +388,24 @@ test('closing items retire and reorder like the return checklist', async () => {
   );
 });
 
+test('closing items carry instructions; the return checklist never sends them', async () => {
+  // checklist_items has no instructions column, so a stray key there would turn
+  // every return-checklist edit into a "column not found" error.
+  const { api, calls } = setup(
+    byTable({ closing_items: { data: { id: 'x' } }, checklist_items: { data: { id: 'y' } } }),
+  );
+
+  await api.createClosingItem('Lock up', 3, { instructions: 'Both latches.' });
+  await api.updateClosingItem('c-1', { label: 'Lock up', instructions: null });
+  await api.createChecklistItem('Trash out', 2, { instructions: 'nope' });
+  await api.updateChecklistItem('r-1', { label: 'Trash out', instructions: 'nope' });
+
+  assert.deepEqual(calls[0].payload, { label: 'Lock up', sort_order: 3, instructions: 'Both latches.' });
+  assert.deepEqual(calls[1].payload, { label: 'Lock up', instructions: null });
+  assert.deepEqual(calls[2].payload, { label: 'Trash out', sort_order: 2 });
+  assert.deepEqual(calls[3].payload, { label: 'Trash out' });
+});
+
 test('closing item writes surface a missing RLS policy instead of silently passing', async () => {
   const { api } = setup(byTable({ closing_items: { error: pgError('PGRST116') } }));
 

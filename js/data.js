@@ -388,8 +388,16 @@ export function createDataApi(supabase) {
   // every shift or every night, so leadership needs to change them without a
   // developer. Never deleted — retiring keeps historical tick rows pointing at a
   // real label.
+  //
+  // `extraFields` are the columns one list has and the other doesn't — the
+  // closing list's how-to instructions. Only those names are ever written, so the
+  // return checklist never sends a column its table doesn't have.
   // ---------------------------------------------------------------------------
-  function itemListApi(table) {
+  function itemListApi(table, { extraFields = [] } = {}) {
+    const editable = ['label', ...extraFields];
+    const pick = (values) =>
+      Object.fromEntries(editable.filter((k) => k in values).map((k) => [k, values[k]]));
+
     return {
       async fetchActive() {
         const { data, error } = await supabase
@@ -411,18 +419,18 @@ export function createDataApi(supabase) {
         return data;
       },
 
-      async create(label, sortOrder) {
+      async create(label, sortOrder, extra = {}) {
         const { data, error } = await supabase
           .from(table)
-          .insert({ label, sort_order: sortOrder })
+          .insert({ ...pick(extra), label, sort_order: sortOrder })
           .select('*')
           .single();
         if (error) throw error;
         return data;
       },
 
-      async update(id, { label }) {
-        await updateRowOrThrow(table, id, { label });
+      async update(id, values) {
+        await updateRowOrThrow(table, id, pick(values));
       },
 
       async setActive(id, active) {
@@ -441,7 +449,7 @@ export function createDataApi(supabase) {
   }
 
   const returnItems = itemListApi('checklist_items');
-  const closingItems = itemListApi('closing_items');
+  const closingItems = itemListApi('closing_items', { extraFields: ['instructions'] });
 
   async function returnVehicle(sessionId, itemIds, notes) {
     // These used to run in parallel, which meant a lost race (someone else closed

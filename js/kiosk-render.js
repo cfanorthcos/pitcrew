@@ -43,17 +43,27 @@ export function avatar(name, variant = '') {
 }
 
 // `leadingHtml` and `trailingHtml` are raw. A row is a <button> so the whole
-// 88px strip is the hit target rather than the text inside it.
-export function listRow({ leadingHtml = '', title, sub = null, trailingHtml = '', data = {}, strong = false }) {
+// 88px strip is the hit target rather than the text inside it — unless
+// `tappable` is false, for a row that is only there to be read.
+export function listRow({
+  leadingHtml = '',
+  title,
+  sub = null,
+  trailingHtml = '',
+  data = {},
+  strong = false,
+  tappable = true,
+}) {
+  const open = tappable ? `<button type="button" class="row"${attrs(data)}>` : `<div class="row"${attrs(data)}>`;
   return `
-    <button type="button" class="row"${attrs(data)}>
+    ${open}
       ${leadingHtml}
       <span class="row-body">
         <span class="row-title${strong ? ' is-strong' : ''}">${escapeHtml(title)}</span>
         ${sub ? `<span class="row-sub">${escapeHtml(sub)}</span>` : ''}
       </span>
       ${trailingHtml}
-    </button>
+    ${tappable ? '</button>' : '</div>'}
   `;
 }
 
@@ -64,10 +74,15 @@ export function chevron() {
 // ---------------------------------------------------------------------------
 // checklist row — Reminders-style circle, whole row tappable. `sub` is the
 // closing checklist's "done at 9:42 PM" line; the return checklist has none.
+// `detail` is the closing checklist's how-to, shown as a second column; pass
+// `twoColumn` on every row of a list that has the column, so a row without
+// instructions still lines up with the rows that do.
 // ---------------------------------------------------------------------------
-export function checkRow({ id, label, checked = false, sub = null }) {
+export function checkRow({ id, label, checked = false, sub = null, detail = null, twoColumn = false }) {
   return `
-    <button type="button" class="check" role="checkbox" aria-checked="${checked ? 'true' : 'false'}"${attrs({
+    <button type="button" class="check${twoColumn ? ' is-two-col' : ''}" role="checkbox" aria-checked="${
+      checked ? 'true' : 'false'
+    }"${attrs({
       'data-item-id': id,
     })}>
       <span class="check-mark">${icon.check(24, '#fff')}</span>
@@ -75,7 +90,20 @@ export function checkRow({ id, label, checked = false, sub = null }) {
         <span class="check-label">${escapeHtml(label)}</span>
         ${sub ? `<span class="check-sub">${escapeHtml(sub)}</span>` : ''}
       </span>
+      ${twoColumn ? `<span class="check-detail">${escapeHtml(detail ?? '')}</span>` : ''}
     </button>
+  `;
+}
+
+// The column titles over a two-column checklist, laid out on the same grid as
+// the rows beneath them.
+export function checkColumns(first, second) {
+  return `
+    <div class="check-cols" aria-hidden="true">
+      <span></span>
+      <span>${escapeHtml(first)}</span>
+      <span>${escapeHtml(second)}</span>
+    </div>
   `;
 }
 

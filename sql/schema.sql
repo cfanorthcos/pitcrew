@@ -104,16 +104,19 @@ create index driving_session_checklist_items_session_id_idx
 -- ---------------------------------------------------------------------------
 -- closing checklist: the end-of-night list on the kiosk Closing tab.
 --
--- closing_items is the same shape as checklist_items and is edited from admin
--- the same way. closing_checks holds one row per item per night, written the
--- moment somebody taps it, so the close can be shared between whoever is still
--- in the building. close_date is the kiosk's local business date — a tick at
+-- closing_items is checklist_items plus an instructions column, and is edited
+-- from admin the same way. closing_checks holds one row per item per night,
+-- written the moment somebody taps it, so the close can be shared between
+-- whoever is still in the building. close_date is the kiosk's local business date — a tick at
 -- 12:30am belongs to the night before (see CLOSING_DAY_STARTS_AT_HOUR in
 -- js/config.js) — which is why it is a date the app supplies, not now()::date.
 -- ---------------------------------------------------------------------------
+-- instructions is the kiosk's second column: how to do the task, for whoever
+-- is closing for the first time. Optional; the label alone still works.
 create table public.closing_items (
   id uuid primary key default gen_random_uuid(),
   label text not null,
+  instructions text,
   sort_order integer not null default 0,
   active boolean not null default true
 );
@@ -401,9 +404,7 @@ insert into public.closing_items (label, sort_order) values
 -- One of each schedule, so every shape in the table above has a worked example.
 insert into public.slow_tasks (name, description, schedule, frequency_minutes, priority, last_completed) values
   ('Deep clean delivery bags', 'Full wipe-down and sanitize of all hot bags, inside and out.',
-   'interval', 30 * 1440, 'high', now() - interval '25 days'),
-  ('Inspect vehicle equipment', 'Check phone mounts, chargers, and delivery equipment in every vehicle.',
-   'interval', 14 * 1440, 'normal', now() - interval '10 days');
+   'interval', 30 * 1440, 'high', now() - interval '25 days');
 
 insert into public.slow_tasks (name, description, schedule, due_times, priority) values
   ('Walk the lot', 'Trash, carts, and anything blocking the delivery bays.',

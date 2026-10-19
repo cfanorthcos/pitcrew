@@ -25,6 +25,7 @@ import {
   select,
   modalActions,
 } from '../js/render.js';
+import { checkRow, listRow } from '../js/kiosk-render.js';
 
 // The exact shape a driver could self-add from the unauthenticated kiosk to
 // break out of value="…" and run script in an admin's session.
@@ -201,4 +202,26 @@ test('dateInput renders a native date field and drops an empty min', () => {
   assert.ok(html.includes('type="date"'));
   assert.ok(html.includes('value="2026-10-01"'));
   assert.ok(!html.includes('min='), 'a null min must not emit min="null"');
+});
+
+// ---------------------------------------------------------------------------
+// kiosk rows
+// ---------------------------------------------------------------------------
+test('a closing row escapes its instructions and keeps an empty column for alignment', () => {
+  const withHowTo = checkRow({ id: 'c-1', label: 'Lock up', detail: '<script>alert(1)</script>', twoColumn: true });
+  assert.ok(!withHowTo.includes('<script>'));
+  assert.match(withHowTo, /class="check is-two-col"/);
+
+  const without = checkRow({ id: 'c-2', label: 'Lights off', twoColumn: true });
+  assert.match(without, /<span class="check-detail"><\/span>/);
+
+  assert.doesNotMatch(checkRow({ id: 'r-1', label: 'Trash out' }), /check-detail|is-two-col/);
+});
+
+test('a read-only list row is not a button', () => {
+  assert.match(listRow({ title: 'Ana' }), /^\s*<button/);
+  const row = listRow({ title: 'Ana', tappable: false });
+  assert.match(row, /^\s*<div class="row">/);
+  assert.match(row, /<\/div>\s*$/);
+  assert.doesNotMatch(row, /button/);
 });
