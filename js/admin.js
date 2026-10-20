@@ -53,7 +53,7 @@ import {
   ADMIN_PIN,
   SHIFT_OVERDUE_HOURS,
   CLOSING_DAY_STARTS_AT_HOUR,
-  OIL_CHANGE_INTERVAL_MONTHS,
+  OIL_CHANGE_INTERVAL_MILES,
 } from './config.js';
 import {
   escapeHtml,
@@ -76,8 +76,9 @@ import {
   priorityLabel,
   isShiftOverdue,
   formatElapsed,
-  formatCalendarDate,
-  addMonthsToCalendarDate,
+  formatMiles,
+  parseMiles,
+  formatDate,
   oilChangeStatus,
   showError,
   showSuccess,
@@ -362,7 +363,7 @@ function openVehicleModal(vehicle = null) {
 }
 
 function oilChangeBadge(vehicle) {
-  const { label, tone } = oilChangeStatus(vehicle.next_oil_change_due);
+  const { label, tone } = oilChangeStatus(vehicle);
   return badge(label, tone);
 }
 
@@ -441,44 +442,70 @@ function openOilChangeModal(vehicle, onSaved) {
     `
       <h2>Oil Change — ${escapeHtml(vehicle.name)}</h2>
       ${field(
-        'Last oil change',
-        'oil-last-input',
-        dateInput({ id: 'oil-last-input', value: vehicle.last_oil_change ?? '' }),
+        'Current odometer (miles)',
+        'oil-odometer-input',
+        numberInput({ id: 'oil-odometer-input', min: 0, placeholder: 'e.g. 48210', value: vehicle.odometer_miles ?? '' }),
       )}
       ${field(
-        'Next oil change due',
+        'Last oil change at (miles)',
+        'oil-last-input',
+        numberInput({ id: 'oil-last-input', min: 0, value: vehicle.oil_change_last_miles ?? '' }),
+      )}
+      ${field(
+        'Next oil change due at (miles)',
         'oil-next-input',
-        dateInput({ id: 'oil-next-input', value: vehicle.next_oil_change_due ?? '' }),
+        numberInput({ id: 'oil-next-input', min: 0, value: vehicle.oil_change_next_miles ?? '' }),
       )}
       <p class="meta">
-        Picking the last oil change fills in the next one ${OIL_CHANGE_INTERVAL_MONTHS} months
-        later — change it if the sticker on the windshield says otherwise. Clear a
-        date to remove it.
+        Entering the last oil change fills in the next one
+        ${escapeHtml(OIL_CHANGE_INTERVAL_MILES.toLocaleString('en-US'))} miles later — change it if the
+        sticker on the windshield says otherwise. Update the odometer whenever you
+        check the dash; that's what decides whether the car is due. Clear a box to
+        remove it.
       </p>
       ${modalActions('Save', 'oil-save-btn')}
     `,
   );
 
+  const odometerInput = sheet.querySelector('#oil-odometer-input');
   const lastInput = sheet.querySelector('#oil-last-input');
   const nextInput = sheet.querySelector('#oil-next-input');
   lastInput.addEventListener('change', () => {
-    if (lastInput.value) nextInput.value = addMonthsToCalendarDate(lastInput.value, OIL_CHANGE_INTERVAL_MONTHS);
+    const last = parseMiles(lastInput.value);
+    if (Number.isFinite(last)) nextInput.value = String(last + OIL_CHANGE_INTERVAL_MILES);
   });
 
   const saveBtn = sheet.querySelector('#oil-save-btn');
   saveBtn.addEventListener('click', async () => {
-    const patch = { last_oil_change: lastInput.value || null, next_oil_change_due: nextInput.value || null };
-    if (patch.last_oil_change && patch.next_oil_change_due && patch.next_oil_change_due <= patch.last_oil_change) {
-      showError('The next oil change has to be after the last one.');
+    const patch = {
+      odometer_miles: parseMiles(odometerInput.value),
+      oil_change_last_miles: parseMiles(lastInput.value),
+      oil_change_next_miles: parseMiles(nextInput.value),
+    };
+    if (Object.values(patch).some(Number.isNaN)) {
+      showError('Miles must be whole numbers, like 48210.');
       return;
     }
+    if (
+      patch.oil_change_last_miles !== null &&
+      patch.oil_change_next_miles !== null &&
+      patch.oil_change_next_miles <= patch.oil_change_last_miles
+    ) {
+      showError('The next oil change has to be at more miles than the last one.');
+      return;
+    }
+    const odometerChanged = patch.odometer_miles !== (vehicle.odometer_miles ?? null);
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      await setVehicleOilChange(vehicle.id, patch);
+      await setVehicleOilChange(vehicle.id, { ...patch, odometerChanged });
       closeModal();
       showSuccess('Oil change saved.');
-      await onSaved({ ...vehicle, ...patch });
+      await onSaved({
+        ...vehicle,
+        ...patch,
+        odometer_updated_at: odometerChanged ? new Date().toISOString() : vehicle.odometer_updated_at,
+      });
     } catch (err) {
       showError(err.message || 'Could not save the oil change. Try again.');
       saveBtn.disabled = false;
@@ -714,11 +741,19 @@ async function showVehicleDetail(vehicle) {
       ${backLink('‹ Back to vehicles', 'vehicle-detail-back')}
       ${sectionToolbar(`${vehicle.name} — Oil Change`, actionButton('Update Oil Change', 'oil-edit-btn'))}
       ${dataTable({
-        columns: ['Last Oil Change', 'Next Due', 'Status'],
+        columns: ['Odometer', 'Last Oil Change', 'Next Due', 'Status'],
         rows: `
           <tr>
-            <td>${formatCalendarDate(vehicle.last_oil_change, 'Not recorded')}</td>
-            <td>${formatCalendarDate(vehicle.next_oil_change_due, 'Not set')}</td>
+            <td>
+              ${formatMiles(vehicle.odometer_miles, 'Not recorded')}
+              ${
+                vehicle.odometer_updated_at
+                  ? `<div class="cell-sub">as of ${formatDate(vehicle.odometer_updated_at)}</div>`
+                  : ''
+              }
+            </td>
+            <td>${formatMiles(vehicle.oil_change_last_miles, 'Not recorded')}</td>
+            <td>${formatMiles(vehicle.oil_change_next_miles, 'Not set')}</td>
             <td>${oilChangeBadge(vehicle)}</td>
           </tr>
         `,

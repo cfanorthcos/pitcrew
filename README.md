@@ -18,8 +18,9 @@ dashboard, full history, in-app management of drivers, vehicles, both
 checklists and slow tasks, and a log of customer complaints against specific
 drivers.
 
-No mileage is tracked anywhere in this app — not on checkout, not on
-return, not in the database.
+Drivers never enter mileage — not on checkout, not on return. The only
+miles in the app are each vehicle's odometer and oil change readings, which
+a manager types into admin.
 
 ## Tech stack
 
@@ -499,13 +500,20 @@ Until this runs, the Closing tab and the admin list keep working without the
 column, but saving a closing item in admin fails with a "column not found"
 error. The kiosk's **Drivers** tab needs no SQL.
 
-### Tenth upgrade: oil change dates
+### Tenth upgrade: oil change mileage
 
-Adds the oil change dates to each vehicle. Safe to re-run.
+Adds the odometer and oil change mileage to each vehicle. Safe to re-run.
 
 ```sql
-alter table public.vehicles add column if not exists last_oil_change date;
-alter table public.vehicles add column if not exists next_oil_change_due date;
+alter table public.vehicles add column if not exists odometer_miles integer check (odometer_miles >= 0);
+alter table public.vehicles add column if not exists odometer_updated_at timestamptz;
+alter table public.vehicles add column if not exists oil_change_last_miles integer check (oil_change_last_miles >= 0);
+alter table public.vehicles add column if not exists oil_change_next_miles integer check (oil_change_next_miles >= 0);
+
+-- Oil changes were briefly tracked by date. If you ran that version of this
+-- step, these drop its two columns (and any dates entered in them).
+alter table public.vehicles drop column if exists last_oil_change;
+alter table public.vehicles drop column if exists next_oil_change_due;
 ```
 
 Until this runs, the Vehicles table shows every car's oil change as "Not set"
@@ -675,13 +683,21 @@ stays the separate, deliberate action it was.
 ### Oil changes
 
 Tap a vehicle's row in Admin → **Vehicles** to open its page, then **Update
-Oil Change**. Enter the last oil change date and PitCrew fills in the next due
-date `OIL_CHANGE_INTERVAL_MONTHS` (3) months later. You can change that date if
-the windshield sticker says something different. The Vehicles table has an
-**Oil Change** column: red once a car is due or overdue, amber when it's due
-within `OIL_CHANGE_DUE_SOON_DAYS` (14) days. Both settings are in
-`js/config.js`. Oil changes are tracked by date only, because PitCrew still
-records no mileage.
+Oil Change**. It takes three readings in miles:
+
+- **Current odometer.** Update it whenever someone checks the dash. The page
+  shows the date it was last updated.
+- **Last oil change at.** When you enter it, the next one fills in
+  `OIL_CHANGE_INTERVAL_MILES` (5,000) miles later.
+- **Next oil change due at.** Change it if the windshield sticker says
+  something different.
+
+The Vehicles table has an **Oil Change** column that compares the next-due
+reading with the odometer. It's red once the car is due or past due, amber
+within `OIL_CHANGE_DUE_SOON_MILES` (500) miles, and green otherwise. With no
+odometer reading, it just shows the mileage it's due at. Both settings are in
+`js/config.js`. Drivers never enter mileage. The odometer is only as current as
+the last time a manager updated it.
 
 ### Per-vehicle to-do list
 

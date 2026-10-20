@@ -18,11 +18,11 @@ export const CLOSING_DAY_STARTS_AT_HOUR = 4;
 // action so history stays honest about which returns were real.
 export const SHIFT_OVERDUE_HOURS = 12;
 
-// Oil changes. Picking a "last oil change" date in admin pre-fills the next due
-// date this many months later (it can still be changed by hand), and a vehicle
-// whose next oil change is this many days away or closer shows as "due soon".
-export const OIL_CHANGE_INTERVAL_MONTHS = 3;
-export const OIL_CHANGE_DUE_SOON_DAYS = 14;
+// Oil changes, in odometer miles. Entering a "last oil change" reading in admin
+// pre-fills the next one this many miles later (it can still be changed by
+// hand), and a vehicle this many miles or fewer from it shows as "due soon".
+export const OIL_CHANGE_INTERVAL_MILES = 5000;
+export const OIL_CHANGE_DUE_SOON_MILES = 500;
 
 // Admin screen passcode. This is a casual deterrent only, NOT real
 // security — it's a plain constant shipped in frontend code, same as the

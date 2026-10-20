@@ -810,14 +810,30 @@ test("today's completion counts are tallied per task from one bounded read", asy
 // ---------------------------------------------------------------------------
 // oil changes and the per-vehicle to-do list
 // ---------------------------------------------------------------------------
-test('setVehicleOilChange writes both dates and clears an emptied one', async () => {
+test('setVehicleOilChange writes the miles and clears an emptied one', async () => {
   const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
 
-  await api.setVehicleOilChange('v-1', { last_oil_change: '2026-10-01', next_oil_change_due: '' });
+  await api.setVehicleOilChange('v-1', {
+    odometer_miles: 48210,
+    oil_change_last_miles: 45000,
+    oil_change_next_miles: null,
+  });
 
   assert.equal(calls[0].op, 'update');
-  assert.deepEqual(calls[0].payload, { last_oil_change: '2026-10-01', next_oil_change_due: null });
+  assert.deepEqual(calls[0].payload, {
+    odometer_miles: 48210,
+    oil_change_last_miles: 45000,
+    oil_change_next_miles: null,
+  });
   assert.equal(findFilter(calls[0], 'id').value, 'v-1');
+});
+
+test('setVehicleOilChange only restamps the odometer when the reading changed', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
+
+  await api.setVehicleOilChange('v-1', { odometer_miles: 48210, odometerChanged: true });
+
+  assert.ok(calls[0].payload.odometer_updated_at, 'a new reading gets a timestamp');
 });
 
 test('fetchVehicleIssues reads open items uncapped and caps only the resolved ones', async () => {

@@ -5,7 +5,8 @@
 // URL, which Node cannot resolve, and a network round trip is the wrong thing
 // to assert against anyway. tests/ passes in a fake that records calls.
 //
-// No mileage fields exist anywhere in this file, on purpose.
+// No mileage is recorded on a driving session, on purpose. The only miles
+// anywhere are a vehicle's odometer and oil change readings, entered in admin.
 
 // The admin history screens used to select every row ever written with no
 // bound, so they got slower and heavier every week the app ran. They're
@@ -257,14 +258,22 @@ export function createDataApi(supabase) {
     await updateRowOrThrow('vehicles', id, { active });
   }
 
-  // Both are YYYY-MM-DD calendar dates (or empty, to clear). Written together
-  // because they're edited together, and an empty field means "unknown" rather
-  // than "leave alone" — otherwise a wrong date could never be taken back out.
-  async function setVehicleOilChange(id, { last_oil_change, next_oil_change_due }) {
-    await updateRowOrThrow('vehicles', id, {
-      last_oil_change: last_oil_change || null,
-      next_oil_change_due: next_oil_change_due || null,
-    });
+  // Whole miles, or null to clear. Written together because they're edited
+  // together, and null means "unknown" rather than "leave alone" — otherwise a
+  // mistyped reading could never be taken back out. The odometer's timestamp
+  // only moves when the reading itself changed, so saving a new oil change
+  // doesn't make a month-old odometer look fresh.
+  async function setVehicleOilChange(
+    id,
+    { odometer_miles, oil_change_last_miles, oil_change_next_miles, odometerChanged = false },
+  ) {
+    const patch = {
+      odometer_miles: odometer_miles ?? null,
+      oil_change_last_miles: oil_change_last_miles ?? null,
+      oil_change_next_miles: oil_change_next_miles ?? null,
+    };
+    if (odometerChanged) patch.odometer_updated_at = odometer_miles == null ? null : new Date().toISOString();
+    await updateRowOrThrow('vehicles', id, patch);
   }
 
   // ---------------------------------------------------------------------------

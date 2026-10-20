@@ -33,11 +33,13 @@ create table public.vehicles (
   color_hex text not null,
   status vehicle_status not null default 'available',
   active boolean not null default true,
-  -- Oil changes are tracked by calendar date only (PitCrew records no
-  -- mileage). Plain `date`, not timestamptz: it's a day on the calendar, and a
-  -- timestamp would drift a day for anyone west of Greenwich.
-  last_oil_change date,
-  next_oil_change_due date,
+  -- Oil changes, by odometer miles. The odometer is whatever a manager last
+  -- read off the dash and typed into admin — drivers never enter mileage on
+  -- checkout or return. odometer_updated_at says how stale that reading is.
+  odometer_miles integer check (odometer_miles >= 0),
+  odometer_updated_at timestamptz,
+  oil_change_last_miles integer check (oil_change_last_miles >= 0),
+  oil_change_next_miles integer check (oil_change_next_miles >= 0),
   created_at timestamptz not null default now()
 );
 
@@ -58,7 +60,7 @@ create index vehicle_maintenance_vehicle_id_idx on public.vehicle_maintenance (v
 create index vehicle_maintenance_submitted_at_idx on public.vehicle_maintenance (submitted_at desc);
 
 -- ---------------------------------------------------------------------------
--- driving_sessions (no mileage tracking, ever)
+-- driving_sessions (no mileage on checkout or return, ever)
 -- ---------------------------------------------------------------------------
 create table public.driving_sessions (
   id uuid primary key default gen_random_uuid(),

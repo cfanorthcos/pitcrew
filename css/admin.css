@@ -443,6 +443,12 @@ td.cell-wrap {
   max-width: 460px;
 }
 
+/* A quiet second line under a cell's value, e.g. when an odometer was read. */
+.cell-sub {
+  font-size: 13px;
+  color: var(--label-3);
+}
+
 .elapsed {
   font-variant-numeric: tabular-nums;
 }

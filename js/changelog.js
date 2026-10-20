@@ -9,7 +9,7 @@ export const CHANGELOG = [
     date: '2026-10-20',
     title: 'Oil changes and vehicle to-do lists',
     items: [
-      'Managers can record each car’s last oil change and when the next one is due.',
+      'Managers can record each car’s odometer, the mileage at its last oil change, and the mileage when the next one is due.',
       'Each car has a to-do list for things like tire certs, damage and paperwork. Open items show as a red flag on that car’s tile, just like a reported issue.',
       'This Updates button, so you can see what’s changed.',
     ],

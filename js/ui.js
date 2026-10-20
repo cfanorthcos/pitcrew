@@ -5,7 +5,7 @@
 import {
   CLOSING_DAY_STARTS_AT_HOUR,
   SHIFT_OVERDUE_HOURS,
-  OIL_CHANGE_DUE_SOON_DAYS,
+  OIL_CHANGE_DUE_SOON_MILES,
 } from './config.js';
 import {
   SLOW_TASK_PRIORITIES,
@@ -176,55 +176,34 @@ export function formatCloseDate(value) {
 }
 
 // ---------------------------------------------------------------------------
-// calendar dates (Postgres `date` columns, e.g. the oil change dates)
-//
-// These arrive as "YYYY-MM-DD" and are read as local calendar parts for the
-// same reason formatCloseDate is: new Date('2026-10-09') is UTC midnight.
+// oil changes (odometer miles)
 // ---------------------------------------------------------------------------
-function parseCalendarDate(value) {
-  const [y, m, d] = String(value ?? '').split('-').map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d);
+// "48,210 mi".
+export function formatMiles(value, fallback = '—') {
+  if (value === null || value === undefined || value === '') return fallback;
+  return `${Number(value).toLocaleString('en-US')} mi`;
 }
 
-function toCalendarDate(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+// What somebody typed into a miles box: commas and a trailing "mi" are fine,
+// empty is null (unknown), and anything that isn't a whole non-negative number
+// is NaN so the caller can refuse it rather than save a guess.
+export function parseMiles(value) {
+  const text = String(value ?? '').replace(/,/g, '').replace(/\s*mi(les)?\s*$/i, '').trim();
+  if (!text) return null;
+  if (!/^\d+$/.test(text)) return NaN;
+  return Number(text);
 }
 
-// "Oct 9, 2026".
-export function formatCalendarDate(value, fallback = '—') {
-  const date = parseCalendarDate(value);
-  if (!date) return fallback;
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-// Months later, clamped to the end of a shorter month: Nov 30 + 3 is Feb 28,
-// not the March 2 that Date's own overflow would give.
-export function addMonthsToCalendarDate(value, months) {
-  const date = parseCalendarDate(value);
-  if (!date) return '';
-  const target = new Date(date.getFullYear(), date.getMonth() + months, 1);
-  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
-  target.setDate(Math.min(date.getDate(), lastDay));
-  return toCalendarDate(target);
-}
-
-// Where a vehicle stands on its oil change, as a badge label and tone. Whole
-// calendar days, so "due today" means today all day rather than until the hour
-// it was entered.
-export function oilChangeStatus(nextDue, now = new Date()) {
-  const due = parseCalendarDate(nextDue);
-  if (!due) return { label: 'Not set', tone: 'muted' };
-  const days = Math.round((due.getTime() - startOfLocalDay(now).getTime()) / 86400000);
-  if (days < 0) {
-    const late = -days;
-    return { label: `Overdue ${late} ${late === 1 ? 'day' : 'days'}`, tone: 'bad' };
-  }
-  if (days === 0) return { label: 'Due today', tone: 'bad' };
-  if (days === 1) return { label: 'Due tomorrow', tone: 'warn' };
-  if (days <= OIL_CHANGE_DUE_SOON_DAYS) return { label: `Due in ${days} days`, tone: 'warn' };
-  return { label: `Due ${formatCalendarDate(nextDue)}`, tone: 'good' };
+// Where a vehicle stands on its oil change, as a badge label and tone, from the
+// next-due reading and the last odometer reading anyone entered. Without an
+// odometer there is nothing to compare against, so it just says when it's due.
+export function oilChangeStatus({ oil_change_next_miles: next, odometer_miles: odometer } = {}) {
+  if (next === null || next === undefined) return { label: 'Not set', tone: 'muted' };
+  if (odometer === null || odometer === undefined) return { label: `Due at ${formatMiles(next)}`, tone: 'neutral' };
+  const left = next - odometer;
+  if (left < 0) return { label: `Overdue ${formatMiles(-left)}`, tone: 'bad' };
+  if (left === 0) return { label: 'Due now', tone: 'bad' };
+  return { label: `${formatMiles(left)} left`, tone: left <= OIL_CHANGE_DUE_SOON_MILES ? 'warn' : 'good' };
 }
 
 // ---------------------------------------------------------------------------
