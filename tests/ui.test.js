@@ -28,6 +28,8 @@ import {
   clockValue,
   taskDueTimes,
   untilLabel,
+  addMonthsToCalendarDate,
+  oilChangeStatus,
   completionNames,
   formatRelativeTime,
   startOfTodayIso,
@@ -512,4 +514,25 @@ test('startOfTodayIso is local midnight, not UTC midnight', () => {
   assert.equal(back.getDate(), 18);
   assert.equal(back.getHours(), 0);
   assert.equal(back.getMinutes(), 0);
+});
+
+// ---------------------------------------------------------------------------
+// oil changes
+// ---------------------------------------------------------------------------
+test('addMonthsToCalendarDate clamps to the end of a shorter month', () => {
+  assert.equal(addMonthsToCalendarDate('2026-07-15', 3), '2026-10-15');
+  assert.equal(addMonthsToCalendarDate('2026-11-30', 3), '2027-02-28');
+  assert.equal(addMonthsToCalendarDate('2026-10-31', 1), '2026-11-30');
+  assert.equal(addMonthsToCalendarDate('', 3), '');
+});
+
+test('oilChangeStatus reads the due date as a local calendar day', () => {
+  const now = new Date(2026, 9, 20, 21, 30); // Oct 20, 9:30pm local
+  assert.deepEqual(oilChangeStatus(null, now), { label: 'Not set', tone: 'muted' });
+  assert.deepEqual(oilChangeStatus('2026-10-20', now), { label: 'Due today', tone: 'bad' });
+  assert.deepEqual(oilChangeStatus('2026-10-19', now), { label: 'Overdue 1 day', tone: 'bad' });
+  assert.deepEqual(oilChangeStatus('2026-10-10', now), { label: 'Overdue 10 days', tone: 'bad' });
+  assert.deepEqual(oilChangeStatus('2026-10-21', now), { label: 'Due tomorrow', tone: 'warn' });
+  assert.deepEqual(oilChangeStatus('2026-11-03', now), { label: 'Due in 14 days', tone: 'warn' });
+  assert.equal(oilChangeStatus('2026-12-20', now).tone, 'good');
 });

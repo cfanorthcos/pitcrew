@@ -48,6 +48,8 @@ js/icons.js           inline SVG icon set
 js/match.js           driver name matching for the kiosk identity screen
 js/version-watch.js   reloads the kiosk when a new version is deployed
 js/feedback.js        Send Feedback button → Zapier webhook → Monday board
+js/changelog.js       the kiosk's "What's New" entries, newest first
+js/updates.js         the kiosk's Updates button and its unseen-count badge
 js/app.js             driver kiosk logic
 js/admin.js           admin dashboard logic
 tests/                node --test suite, no dependencies
@@ -497,6 +499,19 @@ Until this runs, the Closing tab and the admin list keep working without the
 column, but saving a closing item in admin fails with a "column not found"
 error. The kiosk's **Drivers** tab needs no SQL.
 
+### Tenth upgrade: oil change dates
+
+Adds the oil change dates to each vehicle. Safe to re-run.
+
+```sql
+alter table public.vehicles add column if not exists last_oil_change date;
+alter table public.vehicles add column if not exists next_oil_change_due date;
+```
+
+Until this runs, the Vehicles table shows every car's oil change as "Not set"
+and saving one fails with a "column not found" error. The per-vehicle to-do
+list needs no SQL — it uses the existing `vehicle_maintenance` table.
+
 ## Running locally
 
 No build step — just serve the folder statically:
@@ -657,6 +672,27 @@ Reporting deliberately does **not** change `vehicles.status`. A driver reporting
 the road shouldn't silently close the report that prompted it — **Take off road**
 stays the separate, deliberate action it was.
 
+### Oil changes
+
+Tap a vehicle's row in Admin → **Vehicles** to open its page, then **Update
+Oil Change**. Enter the last oil change date and PitCrew fills in the next due
+date `OIL_CHANGE_INTERVAL_MONTHS` (3) months later. You can change that date if
+the windshield sticker says something different. The Vehicles table has an
+**Oil Change** column: red once a car is due or overdue, amber when it's due
+within `OIL_CHANGE_DUE_SOON_DAYS` (14) days. Both settings are in
+`js/config.js`. Oil changes are tracked by date only, because PitCrew still
+records no mileage.
+
+### Per-vehicle to-do list
+
+A vehicle's page also has a **To-Do & Open Issues** list: tire certifications,
+damage repair, inspection, registration and so on, plus everything drivers
+reported from the kiosk for that car. **+ Add To-Do** writes a row to
+`vehicle_maintenance`, the same table as kiosk reports. Each open item counts
+toward the vehicle's Open Issues total, the dashboard tile and the red flag on
+its kiosk tile until someone taps **Mark done**. Marking an item done never
+deletes it. Like kiosk reports, adding an item doesn't change `vehicles.status`.
+
 Equivalent SQL, if you'd rather:
 
 ```sql
@@ -795,6 +831,18 @@ Every schedule must carry the column that describes it —
 `slow_tasks_schedule_fields` enforces that, because an interval task with no
 cadence has nothing to roll forward to and would sit permanently due while
 looking like a bug in the kiosk.
+
+## Updates on the kiosk
+
+The **Updates** button in the kiosk's top corner opens a "What's New" list of
+recent changes. A red number beside it counts the entries this iPad hasn't
+opened yet. Opening the list clears it.
+
+To announce a change, add an entry to the top of `CHANGELOG` in
+`js/changelog.js` with a new unique `id`, the date, a short title and one or
+two plain-language lines for drivers. Once it's deployed, the kiosk reloads
+itself and the badge comes back. What each iPad has already seen is stored in
+that browser only, so a fresh device starts with every entry marked new.
 
 ## Feedback to Monday
 

@@ -247,6 +247,22 @@ button.k-adminlink {
   background: var(--fill);
 }
 
+/* Updates: a red count after the label of entries this iPad hasn't opened. */
+.k-updates-badge {
+  min-width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--red);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
 .k-navctx {
   display: flex;
   align-items: center;
@@ -1103,4 +1119,64 @@ button.k-adminlink {
 
 .banner-offline {
   background: var(--label-2);
+}
+
+/* --------------------------------------------------------------------------
+   updates sheet (js/updates.js)
+   -------------------------------------------------------------------------- */
+.update-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.update-entry {
+  padding: 16px 0;
+  border-top: 0.5px solid var(--separator);
+}
+
+.update-entry:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+.update-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-date {
+  font-size: var(--fs-section);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--label-3);
+}
+
+.update-new {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tint);
+  background: var(--tint-soft);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.update-title {
+  margin: 6px 0 6px;
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+}
+
+.update-items {
+  margin: 0;
+  padding-left: 22px;
+  font-size: var(--fs-sub);
+  color: var(--label-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

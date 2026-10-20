@@ -806,3 +806,29 @@ test("today's completion counts are tallied per task from one bounded read", asy
   assert.equal(counts.get('b'), 1);
   assert.equal(counts.get('missing'), undefined);
 });
+
+// ---------------------------------------------------------------------------
+// oil changes and the per-vehicle to-do list
+// ---------------------------------------------------------------------------
+test('setVehicleOilChange writes both dates and clears an emptied one', async () => {
+  const { api, calls } = setup(byTable({ vehicles: { data: { id: 'v-1' } } }));
+
+  await api.setVehicleOilChange('v-1', { last_oil_change: '2026-10-01', next_oil_change_due: '' });
+
+  assert.equal(calls[0].op, 'update');
+  assert.deepEqual(calls[0].payload, { last_oil_change: '2026-10-01', next_oil_change_due: null });
+  assert.equal(findFilter(calls[0], 'id').value, 'v-1');
+});
+
+test('fetchVehicleIssues reads open items uncapped and caps only the resolved ones', async () => {
+  const { api, calls } = setup(byTable({ vehicle_maintenance: { data: [] } }));
+
+  await api.fetchVehicleIssues('veh-1');
+
+  const open = calls.find((c) => findFilter(c, 'status')?.value === 'open');
+  const resolved = calls.find((c) => findFilter(c, 'status')?.value === 'resolved');
+  assert.equal(findFilter(open, 'vehicle_id').value, 'veh-1');
+  assert.equal(findFilter(resolved, 'vehicle_id').value, 'veh-1');
+  assert.equal(open.modifiers.find((m) => m.type === 'limit'), undefined);
+  assert.ok(resolved.modifiers.find((m) => m.type === 'limit'));
+});

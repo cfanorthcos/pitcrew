@@ -257,6 +257,16 @@ export function createDataApi(supabase) {
     await updateRowOrThrow('vehicles', id, { active });
   }
 
+  // Both are YYYY-MM-DD calendar dates (or empty, to clear). Written together
+  // because they're edited together, and an empty field means "unknown" rather
+  // than "leave alone" — otherwise a wrong date could never be taken back out.
+  async function setVehicleOilChange(id, { last_oil_change, next_oil_change_due }) {
+    await updateRowOrThrow('vehicles', id, {
+      last_oil_change: last_oil_change || null,
+      next_oil_change_due: next_oil_change_due || null,
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // vehicle maintenance reports
   //
@@ -292,6 +302,31 @@ export function createDataApi(supabase) {
       .limit(limit);
     if (error) throw error;
     return data;
+  }
+
+  // One vehicle's to-do list on its admin page: open items first (oldest at the
+  // top, since that's what has waited longest), then the most recent resolved
+  // ones. Two reads so a long resolved tail can never push an open item past
+  // the cap.
+  async function fetchVehicleIssues(vehicleId, limit = HISTORY_PAGE_SIZE) {
+    const [open, resolved] = await Promise.all([
+      supabase
+        .from('vehicle_maintenance')
+        .select('*')
+        .eq('vehicle_id', vehicleId)
+        .eq('status', 'open')
+        .order('submitted_at', { ascending: true }),
+      supabase
+        .from('vehicle_maintenance')
+        .select('*')
+        .eq('vehicle_id', vehicleId)
+        .eq('status', 'resolved')
+        .order('resolved_at', { ascending: false })
+        .limit(limit),
+    ]);
+    if (open.error) throw open.error;
+    if (resolved.error) throw resolved.error;
+    return { open: open.data, resolved: resolved.data };
   }
 
   async function setVehicleIssueStatus(id, resolved) {
@@ -713,9 +748,11 @@ export function createDataApi(supabase) {
     updateVehicle,
     setVehicleStatus,
     setVehicleActive,
+    setVehicleOilChange,
     reportVehicleIssue,
     fetchOpenVehicleIssues,
     fetchVehicleMaintenanceHistory,
+    fetchVehicleIssues,
     setVehicleIssueStatus,
     checkoutVehicle,
     forceCloseSession,

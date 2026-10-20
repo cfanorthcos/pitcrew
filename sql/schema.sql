@@ -33,6 +33,11 @@ create table public.vehicles (
   color_hex text not null,
   status vehicle_status not null default 'available',
   active boolean not null default true,
+  -- Oil changes are tracked by calendar date only (PitCrew records no
+  -- mileage). Plain `date`, not timestamptz: it's a day on the calendar, and a
+  -- timestamp would drift a day for anyone west of Greenwich.
+  last_oil_change date,
+  next_oil_change_due date,
   created_at timestamptz not null default now()
 );
 

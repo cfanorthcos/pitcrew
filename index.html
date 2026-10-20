@@ -53,6 +53,17 @@
         <span class="k-clock" id="nav-clock" data-clock>—</span>
 
         <div class="k-navend" id="nav-end">
+          <!-- What's new: recent changes from js/changelog.js, with a count of
+               the ones this iPad hasn't opened yet. -->
+          <button type="button" class="k-adminlink k-updates hidden" id="nav-updates" aria-label="Updates">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 16.5V11a6 6 0 1112 0v5.5l1.5 2h-15l1.5-2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+              <path d="M10 20.5a2 2 0 004 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <span>Updates</span>
+            <span class="k-updates-badge hidden"></span>
+          </button>
+
           <!-- Hidden until FEEDBACK_WEBHOOK_URL is set in js/config.js. -->
           <button type="button" class="k-adminlink hidden" id="nav-feedback">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">

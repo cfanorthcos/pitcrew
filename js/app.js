@@ -61,6 +61,7 @@ import { icon } from './icons.js';
 import { searchDrivers, orderByRecent, findExactDriver, findConfusableDriver } from './match.js';
 import { createVersionWatcher } from './version-watch.js';
 import { isFeedbackEnabled, openFeedbackModal } from './feedback.js';
+import { initUpdates } from './updates.js';
 
 const BOARD_REFRESH_MS = 20000;
 
@@ -317,6 +318,8 @@ $('vehicle-board').addEventListener('click', (event) => {
 });
 
 $('report-vehicle-btn').addEventListener('click', () => openVehicleIssueModal());
+
+initUpdates($('nav-updates'));
 
 if (isFeedbackEnabled()) {
   $('nav-feedback').classList.remove('hidden');

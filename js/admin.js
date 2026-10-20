@@ -4,8 +4,11 @@ import {
   updateVehicle,
   setVehicleStatus,
   setVehicleActive,
+  setVehicleOilChange,
   fetchOpenVehicleIssues,
   fetchVehicleMaintenanceHistory,
+  fetchVehicleIssues,
+  reportVehicleIssue,
   setVehicleIssueStatus,
   VEHICLE_STATUSES,
   SLOW_TASK_PRIORITIES,
@@ -46,7 +49,12 @@ import {
   fetchVehicleHistory,
   HISTORY_PAGE_SIZE,
 } from './supabase.js';
-import { ADMIN_PIN, SHIFT_OVERDUE_HOURS, CLOSING_DAY_STARTS_AT_HOUR } from './config.js';
+import {
+  ADMIN_PIN,
+  SHIFT_OVERDUE_HOURS,
+  CLOSING_DAY_STARTS_AT_HOUR,
+  OIL_CHANGE_INTERVAL_MONTHS,
+} from './config.js';
 import {
   escapeHtml,
   safeHex,
@@ -68,6 +76,9 @@ import {
   priorityLabel,
   isShiftOverdue,
   formatElapsed,
+  formatCalendarDate,
+  addMonthsToCalendarDate,
+  oilChangeStatus,
   showError,
   showSuccess,
   initOfflineBanner,
@@ -350,6 +361,132 @@ function openVehicleModal(vehicle = null) {
   });
 }
 
+function oilChangeBadge(vehicle) {
+  const { label, tone } = oilChangeStatus(vehicle.next_oil_change_due);
+  return badge(label, tone);
+}
+
+// The usual things a car needs done, offered when admin adds an item from the
+// vehicle page. Items go into vehicle_maintenance alongside what drivers report
+// from the kiosk, so they count as Open Issues everywhere until marked done.
+const VEHICLE_TODO_OPTIONS = [
+  'Tire certification',
+  'Damage repair',
+  'Inspection',
+  'Registration renewal',
+  'Insurance card',
+  'Windshield',
+  'Brakes',
+  'Detail / deep clean',
+  'Other',
+];
+
+function openVehicleTodoModal(vehicle, onSaved) {
+  const sheet = openModal(
+    `Add a to-do for ${vehicle.name}`,
+    `
+      <h2>Add To-Do — ${escapeHtml(vehicle.name)}</h2>
+      ${field(
+        'What needs doing',
+        'vehicle-todo-select',
+        select({
+          id: 'vehicle-todo-select',
+          placeholder: 'Choose one',
+          options: VEHICLE_TODO_OPTIONS.map((label) => ({ value: label, label })),
+        }),
+      )}
+      ${field(
+        'Notes',
+        'vehicle-todo-notes',
+        textArea({ id: 'vehicle-todo-notes', placeholder: 'Details, due date, who is handling it… (required for Other)' }),
+      )}
+      <p class="meta">
+        Shows as an open issue on the board, the dashboard and the Vehicles table
+        until it's marked done.
+      </p>
+      ${modalActions('Add', 'vehicle-todo-save-btn')}
+    `,
+  );
+
+  const saveBtn = sheet.querySelector('#vehicle-todo-save-btn');
+  saveBtn.addEventListener('click', async () => {
+    const issue = sheet.querySelector('#vehicle-todo-select').value;
+    const notes = sheet.querySelector('#vehicle-todo-notes').value.trim();
+    if (!issue) {
+      showError('Choose what needs doing.');
+      return;
+    }
+    if (issue === 'Other' && !notes) {
+      showError('Add a note saying what needs doing.');
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await reportVehicleIssue(vehicle.id, issue, notes);
+      closeModal();
+      showSuccess(`${issue} added to ${vehicle.name}.`);
+      await onSaved(vehicle);
+    } catch (err) {
+      showError(err.message || 'Could not add this item. Try again.');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Add';
+    }
+  });
+}
+
+function openOilChangeModal(vehicle, onSaved) {
+  const sheet = openModal(
+    `Oil change for ${vehicle.name}`,
+    `
+      <h2>Oil Change — ${escapeHtml(vehicle.name)}</h2>
+      ${field(
+        'Last oil change',
+        'oil-last-input',
+        dateInput({ id: 'oil-last-input', value: vehicle.last_oil_change ?? '' }),
+      )}
+      ${field(
+        'Next oil change due',
+        'oil-next-input',
+        dateInput({ id: 'oil-next-input', value: vehicle.next_oil_change_due ?? '' }),
+      )}
+      <p class="meta">
+        Picking the last oil change fills in the next one ${OIL_CHANGE_INTERVAL_MONTHS} months
+        later — change it if the sticker on the windshield says otherwise. Clear a
+        date to remove it.
+      </p>
+      ${modalActions('Save', 'oil-save-btn')}
+    `,
+  );
+
+  const lastInput = sheet.querySelector('#oil-last-input');
+  const nextInput = sheet.querySelector('#oil-next-input');
+  lastInput.addEventListener('change', () => {
+    if (lastInput.value) nextInput.value = addMonthsToCalendarDate(lastInput.value, OIL_CHANGE_INTERVAL_MONTHS);
+  });
+
+  const saveBtn = sheet.querySelector('#oil-save-btn');
+  saveBtn.addEventListener('click', async () => {
+    const patch = { last_oil_change: lastInput.value || null, next_oil_change_due: nextInput.value || null };
+    if (patch.last_oil_change && patch.next_oil_change_due && patch.next_oil_change_due <= patch.last_oil_change) {
+      showError('The next oil change has to be after the last one.');
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await setVehicleOilChange(vehicle.id, patch);
+      closeModal();
+      showSuccess('Oil change saved.');
+      await onSaved({ ...vehicle, ...patch });
+    } catch (err) {
+      showError(err.message || 'Could not save the oil change. Try again.');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  });
+}
+
 async function renderVehicles() {
   const container = document.getElementById('section-vehicles');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
@@ -389,6 +526,7 @@ async function renderVehicles() {
                 : '—'
             }</td>
             <td>${openCount}</td>
+            <td>${oilChangeBadge(v)}</td>
             <td>${rowActions([
               { label: 'Edit', className: 'edit-vehicle-btn', data: { 'data-vehicle-id': v.id } },
               // The urgent path gets its own one-tap button. A car comes off the
@@ -443,6 +581,7 @@ async function renderVehicles() {
           'Shift Started',
           'Elapsed',
           'Open Issues',
+          'Oil Change',
           'Actions',
         ],
         rows,
@@ -450,7 +589,7 @@ async function renderVehicles() {
       })}
       <h2 class="section-title">Reported Issues</h2>
       ${sectionHint(
-        'Filed by drivers from the kiosk. Resolving clears it off the board and the dashboard count; it never deletes the report. Taking the car off the road is a separate decision, above.',
+        "Filed by drivers from the kiosk, or added as a to-do on a vehicle's page (tap its row above). Resolving clears it off the board and the dashboard count; it never deletes the report. Taking the car off the road is a separate decision, above.",
       )}
       ${dataTable({
         columns: ['Vehicle', 'Issue', 'Notes', 'Status', 'Submitted', 'Actions'],
@@ -530,7 +669,33 @@ async function showVehicleDetail(vehicle) {
   const container = document.getElementById('section-vehicle-detail');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const history = await fetchVehicleHistory(vehicle.id);
+    // The to-do list is best-effort so the page still shows the oil change and
+    // history if the maintenance read fails.
+    const [history, issues] = await Promise.all([
+      fetchVehicleHistory(vehicle.id),
+      fetchVehicleIssues(vehicle.id).catch(() => null),
+    ]);
+    const todos = issues ? [...issues.open, ...issues.resolved] : [];
+    const todoRows = todos
+      .map(
+        (m) => `
+          <tr class="${m.status === 'open' ? '' : 'is-inactive'}">
+            <td><strong>${escapeHtml(m.issue)}</strong></td>
+            <td class="cell-wrap">${escapeHtml(m.notes ?? '—')}</td>
+            <td>${badge(m.status === 'open' ? 'Open' : 'Done', m.status === 'open' ? 'warn' : 'good')}</td>
+            <td>${formatDateTime(m.submitted_at)}</td>
+            <td>${m.status === 'open' ? '—' : formatDateTime(m.resolved_at)}</td>
+            <td>${rowActions([
+              {
+                label: m.status === 'open' ? 'Mark done' : 'Reopen',
+                className: 'toggle-vehicle-todo-btn',
+                data: { 'data-maintenance-id': m.id, 'data-resolve': m.status === 'open' ? '1' : '0' },
+              },
+            ])}</td>
+          </tr>
+        `,
+      )
+      .join('');
     const rows = history
       .map(
         (s) => `
@@ -547,7 +712,32 @@ async function showVehicleDetail(vehicle) {
 
     container.innerHTML = `
       ${backLink('‹ Back to vehicles', 'vehicle-detail-back')}
-      <h2 class="section-title">${escapeHtml(vehicle.name)} — Driving History</h2>
+      ${sectionToolbar(`${vehicle.name} — Oil Change`, actionButton('Update Oil Change', 'oil-edit-btn'))}
+      ${dataTable({
+        columns: ['Last Oil Change', 'Next Due', 'Status'],
+        rows: `
+          <tr>
+            <td>${formatCalendarDate(vehicle.last_oil_change, 'Not recorded')}</td>
+            <td>${formatCalendarDate(vehicle.next_oil_change_due, 'Not set')}</td>
+            <td>${oilChangeBadge(vehicle)}</td>
+          </tr>
+        `,
+        empty: '',
+      })}
+      ${sectionToolbar('To-Do & Open Issues', actionButton('+ Add To-Do', 'vehicle-todo-add-btn'))}
+      ${sectionHint(
+        "Things this car needs — tire certs, damage, paperwork — plus anything drivers reported from the kiosk. Open items count toward Open Issues everywhere; marking one done never deletes it.",
+      )}
+      ${
+        issues
+          ? dataTable({
+              columns: ['Item', 'Notes', 'Status', 'Added', 'Done', 'Actions'],
+              rows: todoRows,
+              empty: 'Nothing to do on this car.',
+            })
+          : `<p class="empty-state">Could not load this vehicle's to-do list.</p>`
+      }
+      <h2 class="section-title">Driving History</h2>
       ${
         history.length >= HISTORY_PAGE_SIZE
           ? sectionHint(`Showing the ${HISTORY_PAGE_SIZE} most recent shifts.`)
@@ -560,6 +750,24 @@ async function showVehicleDetail(vehicle) {
       })}
     `;
     container.querySelector('#vehicle-detail-back').addEventListener('click', () => switchSection('vehicles'));
+    container
+      .querySelector('#oil-edit-btn')
+      .addEventListener('click', () => openOilChangeModal(vehicle, showVehicleDetail));
+    container
+      .querySelector('#vehicle-todo-add-btn')
+      .addEventListener('click', () => openVehicleTodoModal(vehicle, showVehicleDetail));
+    container.querySelectorAll('.toggle-vehicle-todo-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await setVehicleIssueStatus(btn.dataset.maintenanceId, btn.dataset.resolve === '1');
+          await showVehicleDetail(vehicle);
+        } catch (err) {
+          showError(err.message || 'Could not update this item. Try again.');
+          btn.disabled = false;
+        }
+      });
+    });
   } catch {
     showError('Could not load vehicle history.');
     container.innerHTML = '<p class="empty-state">Could not load vehicle history.</p>';

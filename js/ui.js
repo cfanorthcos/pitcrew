@@ -2,7 +2,11 @@
 // dashboard (admin.js). These were previously duplicated verbatim in both
 // files, which is how the escaping bug below survived in two places at once.
 
-import { CLOSING_DAY_STARTS_AT_HOUR, SHIFT_OVERDUE_HOURS } from './config.js';
+import {
+  CLOSING_DAY_STARTS_AT_HOUR,
+  SHIFT_OVERDUE_HOURS,
+  OIL_CHANGE_DUE_SOON_DAYS,
+} from './config.js';
 import {
   SLOW_TASK_PRIORITIES,
   DEFAULT_SLOW_TASK_PRIORITY,
@@ -169,6 +173,58 @@ export function formatCloseDate(value) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+// ---------------------------------------------------------------------------
+// calendar dates (Postgres `date` columns, e.g. the oil change dates)
+//
+// These arrive as "YYYY-MM-DD" and are read as local calendar parts for the
+// same reason formatCloseDate is: new Date('2026-10-09') is UTC midnight.
+// ---------------------------------------------------------------------------
+function parseCalendarDate(value) {
+  const [y, m, d] = String(value ?? '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function toCalendarDate(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+// "Oct 9, 2026".
+export function formatCalendarDate(value, fallback = '—') {
+  const date = parseCalendarDate(value);
+  if (!date) return fallback;
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Months later, clamped to the end of a shorter month: Nov 30 + 3 is Feb 28,
+// not the March 2 that Date's own overflow would give.
+export function addMonthsToCalendarDate(value, months) {
+  const date = parseCalendarDate(value);
+  if (!date) return '';
+  const target = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(date.getDate(), lastDay));
+  return toCalendarDate(target);
+}
+
+// Where a vehicle stands on its oil change, as a badge label and tone. Whole
+// calendar days, so "due today" means today all day rather than until the hour
+// it was entered.
+export function oilChangeStatus(nextDue, now = new Date()) {
+  const due = parseCalendarDate(nextDue);
+  if (!due) return { label: 'Not set', tone: 'muted' };
+  const days = Math.round((due.getTime() - startOfLocalDay(now).getTime()) / 86400000);
+  if (days < 0) {
+    const late = -days;
+    return { label: `Overdue ${late} ${late === 1 ? 'day' : 'days'}`, tone: 'bad' };
+  }
+  if (days === 0) return { label: 'Due today', tone: 'bad' };
+  if (days === 1) return { label: 'Due tomorrow', tone: 'warn' };
+  if (days <= OIL_CHANGE_DUE_SOON_DAYS) return { label: `Due in ${days} days`, tone: 'warn' };
+  return { label: `Due ${formatCalendarDate(nextDue)}`, tone: 'good' };
 }
 
 // ---------------------------------------------------------------------------
